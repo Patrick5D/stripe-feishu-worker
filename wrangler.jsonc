@@ -1,0 +1,15 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "stripe-feishu-worker",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-01",
+  "routes": [
+    {
+      "pattern": "bingo.thecelesteway.com",
+      "custom_domain": true
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}

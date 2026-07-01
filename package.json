@@ -1,0 +1,23 @@
+{
+  "name": "stripe-feishu-worker",
+  "version": "1.0.0",
+  "description": "Cloudflare Worker that forwards verified Stripe webhook events to a Feishu group bot.",
+  "main": "src/index.ts",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "UNLICENSED",
+  "type": "module",
+  "dependencies": {
+    "stripe": "^22.3.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250701.0",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.106.0"
+  }
+}
