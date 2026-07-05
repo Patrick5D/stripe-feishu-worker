@@ -6,7 +6,7 @@ src/ - Worker 入口与业务逻辑 (1文件: index.ts)
 </directory>
 
 <config>
-README.md - 公开说明端点、事件与 secret 配置方式，不承载真实密钥
+README.md - 公开说明端点、事件、secret 配置方式和新增项目流程，不承载真实密钥
 .gitignore - 阻止依赖、环境变量、本地构建产物进入仓库
 package.json - 依赖与 npm 脚本
 tsconfig.json - Worker TypeScript 类型检查
