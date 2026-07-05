@@ -188,7 +188,7 @@ function formatPaymentNotice(
   customer: string | Stripe.Customer | Stripe.DeletedCustomer | null | undefined,
 ): string {
   return lines([
-    `💰 [${kind}] ！ ${site.label}`,
+    `💰 新${kind} ！ ${site.label}`,
     `金额: ${formatDisplayAmount(amount, currency)}`,
     `客户: ${formatCustomer(customer)}`,
   ]);

@@ -60,6 +60,14 @@ checkout.session.completed
 invoice.payment_succeeded
 ```
 
+Payment notice format:
+
+```text
+💰 新{月费/年费/积分包/订阅} ！ {project label}
+金额: {actual amount}
+客户: {email/customer_id/unknown}
+```
+
 Other supported notices:
 
 ```text
