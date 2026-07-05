@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 依赖 stripe 的 webhook 验签，依赖 Cloudflare Workers 的 fetch/crypto 运行时
- * [OUTPUT]: 对外提供 /gptimage2/stripe/webhook HTTP 入口，把 Stripe 付款事件转成飞书自定义通知
+ * [OUTPUT]: 对外提供 /gptimage2/stripe/webhook 与 /erasio/stripe/webhook，把 Stripe 付款事件转成飞书自定义通知
  * [POS]: src 的唯一 Worker 入口，负责站点路由、事件格式化、飞书投递
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -8,6 +8,7 @@ import Stripe from "stripe";
 
 type Env = {
   GPTIMAGE2_STRIPE_WEBHOOK_SECRET: string;
+  ERASIO_STRIPE_WEBHOOK_SECRET: string;
   FEISHU_WEBHOOK_URL: string;
   FEISHU_BOT_SECRET: string;
 };
@@ -75,13 +76,23 @@ export default {
 };
 
 function getSite(pathname: string, env: Env): SiteConfig | null {
-  if (pathname !== "/gptimage2/stripe/webhook") return null;
+  if (pathname === "/gptimage2/stripe/webhook") {
+    return {
+      slug: "gptimage2",
+      label: "GPT Image 2",
+      stripeWebhookSecret: env.GPTIMAGE2_STRIPE_WEBHOOK_SECRET,
+    };
+  }
 
-  return {
-    slug: "gptimage2",
-    label: "GPT Image 2",
-    stripeWebhookSecret: env.GPTIMAGE2_STRIPE_WEBHOOK_SECRET,
-  };
+  if (pathname === "/erasio/stripe/webhook") {
+    return {
+      slug: "erasio",
+      label: "Erasio",
+      stripeWebhookSecret: env.ERASIO_STRIPE_WEBHOOK_SECRET,
+    };
+  }
+
+  return null;
 }
 
 function formatEvent(site: SiteConfig, event: Stripe.Event): string | null {

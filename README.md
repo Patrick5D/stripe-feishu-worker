@@ -6,15 +6,20 @@ Cloudflare Worker that verifies Stripe webhook events and sends selected payment
 
 ```text
 POST https://bingo.thecelesteway.com/gptimage2/stripe/webhook
+POST https://bingo.thecelesteway.com/erasio/stripe/webhook
 GET  https://bingo.thecelesteway.com/health
 ```
 
-Current project:
+Current projects:
 
 ```text
 slug: gptimage2
 label: GPT Image 2
 Stripe webhook secret: GPTIMAGE2_STRIPE_WEBHOOK_SECRET
+
+slug: erasio
+label: Erasio
+Stripe webhook secret: ERASIO_STRIPE_WEBHOOK_SECRET
 ```
 
 ## Required Secrets
@@ -23,6 +28,7 @@ Configure secrets with Wrangler. Do not commit real values.
 
 ```bash
 npx wrangler secret put GPTIMAGE2_STRIPE_WEBHOOK_SECRET
+npx wrangler secret put ERASIO_STRIPE_WEBHOOK_SECRET
 npx wrangler secret put FEISHU_WEBHOOK_URL
 npx wrangler secret put FEISHU_BOT_SECRET
 ```
@@ -32,6 +38,10 @@ Secret meaning:
 ```text
 GPTIMAGE2_STRIPE_WEBHOOK_SECRET
   Stripe endpoint signing secret for /gptimage2/stripe/webhook.
+  Value format: whsec_xxx.
+
+ERASIO_STRIPE_WEBHOOK_SECRET
+  Stripe endpoint signing secret for /erasio/stripe/webhook.
   Value format: whsec_xxx.
 
 FEISHU_WEBHOOK_URL
