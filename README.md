@@ -7,6 +7,7 @@ Cloudflare Worker that verifies Stripe webhook events and sends selected payment
 ```text
 POST https://bingo.thecelesteway.com/gptimage2/stripe/webhook
 POST https://bingo.thecelesteway.com/erasio/stripe/webhook
+POST https://bingo.thecelesteway.com/playitout/stripe/webhook
 GET  https://bingo.thecelesteway.com/health
 ```
 
@@ -20,6 +21,10 @@ Stripe webhook secret: GPTIMAGE2_STRIPE_WEBHOOK_SECRET
 slug: erasio
 label: Erasio
 Stripe webhook secret: ERASIO_STRIPE_WEBHOOK_SECRET
+
+slug: playitout
+label: PlayItOut
+Stripe webhook secret: PLAYITOUT_STRIPE_WEBHOOK_SECRET
 ```
 
 ## Required Secrets
@@ -29,6 +34,7 @@ Configure secrets with Wrangler. Do not commit real values.
 ```bash
 npx wrangler secret put GPTIMAGE2_STRIPE_WEBHOOK_SECRET
 npx wrangler secret put ERASIO_STRIPE_WEBHOOK_SECRET
+npx wrangler secret put PLAYITOUT_STRIPE_WEBHOOK_SECRET
 npx wrangler secret put FEISHU_WEBHOOK_URL
 npx wrangler secret put FEISHU_BOT_SECRET
 ```
@@ -44,6 +50,10 @@ ERASIO_STRIPE_WEBHOOK_SECRET
   Stripe endpoint signing secret for /erasio/stripe/webhook.
   Value format: whsec_xxx.
 
+PLAYITOUT_STRIPE_WEBHOOK_SECRET
+  Stripe endpoint signing secret for /playitout/stripe/webhook.
+  Value format: whsec_xxx.
+
 FEISHU_WEBHOOK_URL
   Feishu custom group bot webhook URL.
 
@@ -57,16 +67,38 @@ Custom payment notices are sent for:
 
 ```text
 checkout.session.completed
+  One-time Checkout only: mode=payment and payment_status=paid.
+
+checkout.session.async_payment_succeeded
+  Delayed one-time Checkout payment success.
+
 invoice.payment_succeeded
+  Subscription invoices only: billing_reason starts with subscription and amount_paid > 0.
 ```
 
-Payment notice format:
+Subscription-mode `checkout.session.completed` events are ignored. Their first
+payment and renewals are reported by `invoice.payment_succeeded`, preventing two
+payment notices for one subscription checkout.
+
+Payment notices use Feishu interactive cards. Successful payments are green,
+failures are red, refunds are orange, and subscription changes are blue.
+
+Payment card fields:
 
 ```text
-💰 新{月费/年费/积分包/订阅} ！ {project label}
-金额: {actual amount}
-客户: {email/customer_id/unknown}
+💰 {project label} · 新{月费/年费/积分包/订阅}
+金额
+邮箱, falling back to the Stripe customer id
+账单国家, with an ISO country flag
+类型
+环境, live or test
+时间, Asia/Shanghai
+Stripe event id
 ```
+
+Missing email and country values are omitted instead of displaying `unknown`.
+Checkout email prefers `customer_details.email`; invoice notifications use the
+finalized customer snapshot on the invoice.
 
 Other supported notices:
 
@@ -108,6 +140,7 @@ Edit `src/index.ts`:
 type Env = {
   GPTIMAGE2_STRIPE_WEBHOOK_SECRET: string;
   ERASIO_STRIPE_WEBHOOK_SECRET: string;
+  PLAYITOUT_STRIPE_WEBHOOK_SECRET: string;
   FEISHU_WEBHOOK_URL: string;
   FEISHU_BOT_SECRET: string;
 };
@@ -115,28 +148,16 @@ type Env = {
 
 ### 2. Add The Route Mapping
 
-Add a branch in `getSite`:
+Add an entry in the site route table:
 
 ```ts
-function getSite(pathname: string, env: Env): SiteConfig | null {
-  if (pathname === "/gptimage2/stripe/webhook") {
-    return {
-      slug: "gptimage2",
-      label: "GPT Image 2",
-      stripeWebhookSecret: env.GPTIMAGE2_STRIPE_WEBHOOK_SECRET,
-    };
-  }
-
-  if (pathname === "/erasio/stripe/webhook") {
-    return {
-      slug: "erasio",
-      label: "Erasio",
-      stripeWebhookSecret: env.ERASIO_STRIPE_WEBHOOK_SECRET,
-    };
-  }
-
-  return null;
-}
+const sites: Record<string, SiteDefinition> = {
+  "/playitout/stripe/webhook": {
+    slug: "playitout",
+    label: "PlayItOut",
+    stripeWebhookSecretName: "PLAYITOUT_STRIPE_WEBHOOK_SECRET",
+  },
+};
 ```
 
 ### 3. Deploy The Code
@@ -151,13 +172,14 @@ npx wrangler deploy
 In the matching Stripe account, create a webhook endpoint:
 
 ```text
-https://bingo.thecelesteway.com/erasio/stripe/webhook
+https://bingo.thecelesteway.com/playitout/stripe/webhook
 ```
 
 Subscribe at least:
 
 ```text
 checkout.session.completed
+checkout.session.async_payment_succeeded
 invoice.payment_succeeded
 invoice.payment_failed
 customer.subscription.deleted
@@ -173,7 +195,7 @@ whsec_xxx
 ### 5. Store The Stripe Secret
 
 ```bash
-npx wrangler secret put ERASIO_STRIPE_WEBHOOK_SECRET
+npx wrangler secret put PLAYITOUT_STRIPE_WEBHOOK_SECRET
 ```
 
 Paste the `whsec_xxx` value when Wrangler prompts.
@@ -195,7 +217,7 @@ Expected:
 Unsigned webhook requests should fail:
 
 ```bash
-curl -i -X POST https://bingo.thecelesteway.com/erasio/stripe/webhook
+curl -i -X POST https://bingo.thecelesteway.com/playitout/stripe/webhook
 ```
 
 Expected:

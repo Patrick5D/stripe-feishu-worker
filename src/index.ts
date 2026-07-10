@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 依赖 stripe 的 webhook 验签，依赖 Cloudflare Workers 的 fetch/crypto 运行时
- * [OUTPUT]: 对外提供 /gptimage2/stripe/webhook 与 /erasio/stripe/webhook，把 Stripe 付款事件转成飞书自定义通知
+ * [OUTPUT]: 对外提供多站点 Stripe webhook 路由，把 Stripe 付款事件转成飞书卡片通知
  * [POS]: src 的唯一 Worker 入口，负责站点路由、事件格式化、飞书投递
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -9,6 +9,7 @@ import Stripe from "stripe";
 type Env = {
   GPTIMAGE2_STRIPE_WEBHOOK_SECRET: string;
   ERASIO_STRIPE_WEBHOOK_SECRET: string;
+  PLAYITOUT_STRIPE_WEBHOOK_SECRET: string;
   FEISHU_WEBHOOK_URL: string;
   FEISHU_BOT_SECRET: string;
 };
@@ -17,6 +18,45 @@ type SiteConfig = {
   slug: string;
   label: string;
   stripeWebhookSecret: string;
+};
+
+type StripeWebhookSecretName = Extract<keyof Env, `${string}_STRIPE_WEBHOOK_SECRET`>;
+
+type SiteDefinition = Omit<SiteConfig, "stripeWebhookSecret"> & {
+  stripeWebhookSecretName: StripeWebhookSecretName;
+};
+
+type Notice = {
+  title: string;
+  template: "green" | "red" | "orange" | "blue";
+  fields: Array<{ label: string; value?: string | null }>;
+};
+
+type PaymentDetails = {
+  kind: string;
+  amount: number | null | undefined;
+  currency: string | null | undefined;
+  email?: string | null;
+  customer?: string | null;
+  country?: string | null;
+};
+
+const sites: Record<string, SiteDefinition> = {
+  "/gptimage2/stripe/webhook": {
+    slug: "gptimage2",
+    label: "GPT Image 2",
+    stripeWebhookSecretName: "GPTIMAGE2_STRIPE_WEBHOOK_SECRET",
+  },
+  "/erasio/stripe/webhook": {
+    slug: "erasio",
+    label: "Erasio",
+    stripeWebhookSecretName: "ERASIO_STRIPE_WEBHOOK_SECRET",
+  },
+  "/playitout/stripe/webhook": {
+    slug: "playitout",
+    label: "PlayItOut",
+    stripeWebhookSecretName: "PLAYITOUT_STRIPE_WEBHOOK_SECRET",
+  },
 };
 
 const stripe = new Stripe("unused", {
@@ -76,28 +116,20 @@ export default {
 };
 
 function getSite(pathname: string, env: Env): SiteConfig | null {
-  if (pathname === "/gptimage2/stripe/webhook") {
-    return {
-      slug: "gptimage2",
-      label: "GPT Image 2",
-      stripeWebhookSecret: env.GPTIMAGE2_STRIPE_WEBHOOK_SECRET,
-    };
-  }
+  const site = sites[pathname];
+  if (!site) return null;
 
-  if (pathname === "/erasio/stripe/webhook") {
-    return {
-      slug: "erasio",
-      label: "Erasio",
-      stripeWebhookSecret: env.ERASIO_STRIPE_WEBHOOK_SECRET,
-    };
-  }
-
-  return null;
+  return {
+    slug: site.slug,
+    label: site.label,
+    stripeWebhookSecret: env[site.stripeWebhookSecretName],
+  };
 }
 
-function formatEvent(site: SiteConfig, event: Stripe.Event): string | null {
+function formatEvent(site: SiteConfig, event: Stripe.Event): Notice | null {
   switch (event.type) {
     case "checkout.session.completed":
+    case "checkout.session.async_payment_succeeded":
       return formatCheckoutCompleted(site, event);
     case "invoice.payment_succeeded":
       return formatInvoicePaymentSucceeded(site, event);
@@ -114,84 +146,93 @@ function formatEvent(site: SiteConfig, event: Stripe.Event): string | null {
   }
 }
 
-function formatCheckoutCompleted(site: SiteConfig, event: Stripe.Event): string {
+function formatCheckoutCompleted(site: SiteConfig, event: Stripe.Event): Notice | null {
   const session = event.data.object as Stripe.Checkout.Session;
+  if (session.mode !== "payment" || session.payment_status !== "paid") return null;
 
-  return formatPaymentNotice(
-    site,
-    inferCheckoutKind(session),
-    session.amount_total,
-    session.currency,
-    session.customer_email ?? session.customer,
-  );
+  return formatPaymentNotice(site, event, {
+    kind: inferCheckoutKind(session),
+    amount: session.amount_total,
+    currency: session.currency,
+    email: session.customer_details?.email ?? session.customer_email,
+    customer: formatCustomer(session.customer),
+    country: session.customer_details?.address?.country,
+  });
 }
 
-function formatInvoicePaymentSucceeded(site: SiteConfig, event: Stripe.Event): string {
+function formatInvoicePaymentSucceeded(site: SiteConfig, event: Stripe.Event): Notice | null {
+  const invoice = event.data.object as Stripe.Invoice;
+  if (!invoice.billing_reason?.startsWith("subscription")) return null;
+  if (invoice.amount_paid <= 0) return null;
+
+  return formatPaymentNotice(site, event, {
+    kind: inferInvoiceKind(invoice),
+    amount: invoice.amount_paid,
+    currency: invoice.currency,
+    email: invoice.customer_email,
+    customer: formatCustomer(invoice.customer),
+    country: invoice.customer_address?.country,
+  });
+}
+
+function formatInvoicePaymentFailed(site: SiteConfig, event: Stripe.Event): Notice {
   const invoice = event.data.object as Stripe.Invoice;
 
-  return formatPaymentNotice(
-    site,
-    inferInvoiceKind(invoice),
-    invoice.amount_paid,
-    invoice.currency,
-    invoice.customer_email ?? invoice.customer,
-  );
+  return {
+    title: `⚠️ ${site.label} · 账单支付失败`,
+    template: "red",
+    fields: eventFields(event, [
+      { label: "应付金额", value: formatDisplayAmount(invoice.amount_due, invoice.currency) },
+      customerField(invoice.customer_email, formatCustomer(invoice.customer)),
+      { label: "账单国家", value: formatCountry(invoice.customer_address?.country) },
+    ]),
+  };
 }
 
-function formatInvoicePaymentFailed(site: SiteConfig, event: Stripe.Event): string {
-  const invoice = event.data.object as Stripe.Invoice;
-
-  return lines([
-    `[${site.label}] Stripe 账单支付失败`,
-    `event_id: ${event.id}`,
-    `customer: ${invoice.customer ?? "unknown"}`,
-    `amount_due: ${formatAmount(invoice.amount_due, invoice.currency)}`,
-    `created: ${formatUnix(event.created)}`,
-  ]);
-}
-
-function formatSubscriptionEvent(site: SiteConfig, event: Stripe.Event): string {
+function formatSubscriptionEvent(site: SiteConfig, event: Stripe.Event): Notice {
   const subscription = event.data.object as Stripe.Subscription;
+  const deleted = event.type === "customer.subscription.deleted";
 
-  return lines([
-    `[${site.label}] Stripe 订阅事件`,
-    `type: ${event.type}`,
-    `event_id: ${event.id}`,
-    `customer: ${subscription.customer}`,
-    `status: ${subscription.status}`,
-    `created: ${formatUnix(event.created)}`,
-  ]);
+  return {
+    title: `${deleted ? "⏹️" : "🔄"} ${site.label} · 订阅${deleted ? "结束" : "变更"}`,
+    template: deleted ? "orange" : "blue",
+    fields: eventFields(event, [
+      { label: "客户", value: formatCustomer(subscription.customer) },
+      { label: "状态", value: subscription.status },
+      { label: "事件类型", value: event.type },
+    ]),
+  };
 }
 
-function formatChargeRefunded(site: SiteConfig, event: Stripe.Event): string {
+function formatChargeRefunded(site: SiteConfig, event: Stripe.Event): Notice {
   const charge = event.data.object as Stripe.Charge;
 
-  return lines([
-    `[${site.label}] Stripe 退款`,
-    `event_id: ${event.id}`,
-    `customer: ${charge.customer ?? "unknown"}`,
-    `amount_refunded: ${formatAmount(charge.amount_refunded, charge.currency)}`,
-    `created: ${formatUnix(event.created)}`,
-  ]);
-}
-
-function formatAmount(amount: number | null | undefined, currency: string | null | undefined): string {
-  if (amount == null) return "unknown";
-  return `${(amount / 100).toFixed(2)} ${(currency ?? "").toUpperCase()}`;
+  return {
+    title: `↩️ ${site.label} · 退款`,
+    template: "orange",
+    fields: eventFields(event, [
+      { label: "退款金额", value: formatDisplayAmount(charge.amount_refunded, charge.currency) },
+      customerField(charge.billing_details.email, formatCustomer(charge.customer)),
+      { label: "账单国家", value: formatCountry(charge.billing_details.address?.country) },
+    ]),
+  };
 }
 
 function formatPaymentNotice(
   site: SiteConfig,
-  kind: string,
-  amount: number | null | undefined,
-  currency: string | null | undefined,
-  customer: string | Stripe.Customer | Stripe.DeletedCustomer | null | undefined,
-): string {
-  return lines([
-    `💰 新${kind} ！ ${site.label}`,
-    `金额: ${formatDisplayAmount(amount, currency)}`,
-    `客户: ${formatCustomer(customer)}`,
-  ]);
+  event: Stripe.Event,
+  payment: PaymentDetails,
+): Notice {
+  return {
+    title: `💰 ${site.label} · 新${payment.kind}`,
+    template: "green",
+    fields: eventFields(event, [
+      { label: "金额", value: formatDisplayAmount(payment.amount, payment.currency) },
+      customerField(payment.email, payment.customer),
+      { label: "账单国家", value: formatCountry(payment.country) },
+      { label: "类型", value: payment.kind },
+    ]),
+  };
 }
 
 function inferCheckoutKind(session: Stripe.Checkout.Session): string {
@@ -264,37 +305,102 @@ function findString(value: Record<string, unknown>, path: string[]): string | un
   return typeof cursor === "string" ? cursor : undefined;
 }
 
-function formatDisplayAmount(amount: number | null | undefined, currency: string | null | undefined): string {
-  if (amount == null) return "unknown";
-
-  const major = (amount / 100).toFixed(2);
-  const normalizedCurrency = (currency ?? "").toLowerCase();
-  if (normalizedCurrency === "usd") return `$${major}`;
-  return `${major} ${(currency ?? "").toUpperCase()}`;
+function eventFields(
+  event: Stripe.Event,
+  fields: Array<{ label: string; value?: string | null }>,
+): Notice["fields"] {
+  return [
+    ...fields,
+    { label: "环境", value: event.livemode ? "正式" : "测试" },
+    { label: "时间", value: formatUnix(event.created) },
+    { label: "事件", value: event.id },
+  ];
 }
 
-function formatCustomer(customer: string | Stripe.Customer | Stripe.DeletedCustomer | null | undefined): string {
-  if (!customer) return "unknown";
+function customerField(email?: string | null, customer?: string | null): Notice["fields"][number] {
+  return email ? { label: "邮箱", value: email } : { label: "客户", value: customer };
+}
+
+function formatDisplayAmount(
+  amount: number | null | undefined,
+  currency: string | null | undefined,
+): string | null {
+  if (amount == null) return null;
+  if (!currency) return String(amount);
+
+  const code = currency.toUpperCase();
+  try {
+    const formatter = new Intl.NumberFormat("en-US", { style: "currency", currency: code });
+    const fractionDigits = formatter.resolvedOptions().maximumFractionDigits ?? 2;
+    return formatter.format(amount / 10 ** fractionDigits);
+  } catch {
+    return `${amount} ${code}`;
+  }
+}
+
+function formatCustomer(
+  customer: string | Stripe.Customer | Stripe.DeletedCustomer | null | undefined,
+): string | null {
+  if (!customer) return null;
   if (typeof customer === "string") return customer;
   if ("email" in customer && customer.email) return customer.email;
   return customer.id;
 }
 
 function formatUnix(seconds: number): string {
-  return new Date(seconds * 1000).toISOString();
+  const shanghaiSeconds = seconds + 8 * 60 * 60;
+  return `${new Date(shanghaiSeconds * 1000).toISOString().slice(0, 19).replace("T", " ")} GMT+8`;
 }
 
-function lines(values: string[]): string {
-  return values.join("\n");
+function formatCountry(country: string | null | undefined): string | null {
+  if (!country) return null;
+
+  const code = country.toUpperCase();
+  if (!/^[A-Z]{2}$/.test(code)) return code;
+
+  const flag = [...code]
+    .map((letter) => String.fromCodePoint(127397 + letter.charCodeAt(0)))
+    .join("");
+  return `${flag} ${code}`;
 }
 
-async function sendFeishu(env: Env, text: string): Promise<void> {
+function buildFeishuCard(notice: Notice) {
+  const content = notice.fields
+    .filter((field): field is { label: string; value: string } => Boolean(field.value))
+    .map((field) => `**${field.label}**　${escapeCardText(field.value)}`)
+    .join("\n");
+
+  return {
+    schema: "2.0",
+    config: { update_multi: true },
+    header: {
+      title: { tag: "plain_text", content: notice.title },
+      template: notice.template,
+      padding: "12px 12px 12px 12px",
+    },
+    body: {
+      direction: "vertical",
+      padding: "12px 12px 12px 12px",
+      elements: [{ tag: "markdown", content }],
+    },
+  };
+}
+
+function escapeCardText(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replace(/([\\`*_[\]~])/g, "\\$1");
+}
+
+async function sendFeishu(env: Env, notice: Notice): Promise<void> {
   const timestamp = Math.floor(Date.now() / 1000).toString();
   const payload = {
     timestamp,
     sign: await feishuSign(timestamp, env.FEISHU_BOT_SECRET),
-    msg_type: "text",
-    content: { text },
+    msg_type: "interactive",
+    card: buildFeishuCard(notice),
   };
 
   const response = await fetch(env.FEISHU_WEBHOOK_URL, {
