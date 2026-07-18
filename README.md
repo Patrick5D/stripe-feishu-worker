@@ -89,6 +89,7 @@ Payment card fields:
 💰 {project label} · 新{月费/年费/积分包/订阅}
 金额
 邮箱, falling back to the Stripe customer id
+来源国家, from Checkout/Subscription metadata origin_country
 账单国家, with an ISO country flag
 类型
 环境, live or test
@@ -211,7 +212,7 @@ curl -sS https://bingo.thecelesteway.com/health
 Expected:
 
 ```json
-{"ok":true,"service":"stripe-feishu-worker"}
+{ "ok": true, "service": "stripe-feishu-worker" }
 ```
 
 Unsigned webhook requests should fail:

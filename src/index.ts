@@ -20,7 +20,10 @@ type SiteConfig = {
   stripeWebhookSecret: string;
 };
 
-type StripeWebhookSecretName = Extract<keyof Env, `${string}_STRIPE_WEBHOOK_SECRET`>;
+type StripeWebhookSecretName = Extract<
+  keyof Env,
+  `${string}_STRIPE_WEBHOOK_SECRET`
+>;
 
 type SiteDefinition = Omit<SiteConfig, "stripeWebhookSecret"> & {
   stripeWebhookSecretName: StripeWebhookSecretName;
@@ -38,6 +41,7 @@ type PaymentDetails = {
   currency: string | null | undefined;
   email?: string | null;
   customer?: string | null;
+  originCountry?: string | null;
   country?: string | null;
 };
 
@@ -80,7 +84,9 @@ export default {
     }
 
     if (!site.stripeWebhookSecret) {
-      return new Response("Missing site Stripe webhook secret", { status: 500 });
+      return new Response("Missing site Stripe webhook secret", {
+        status: 500,
+      });
     }
 
     const signature = request.headers.get("stripe-signature");
@@ -106,7 +112,14 @@ export default {
     }
 
     const message = formatEvent(site, event);
-    console.log("stripe_event", JSON.stringify({ site: site.slug, type: event.type, hasMessage: Boolean(message) }));
+    console.log(
+      "stripe_event",
+      JSON.stringify({
+        site: site.slug,
+        type: event.type,
+        hasMessage: Boolean(message),
+      }),
+    );
     if (message) {
       await sendFeishu(env, message);
     }
@@ -146,9 +159,13 @@ function formatEvent(site: SiteConfig, event: Stripe.Event): Notice | null {
   }
 }
 
-function formatCheckoutCompleted(site: SiteConfig, event: Stripe.Event): Notice | null {
+function formatCheckoutCompleted(
+  site: SiteConfig,
+  event: Stripe.Event,
+): Notice | null {
   const session = event.data.object as Stripe.Checkout.Session;
-  if (session.mode !== "payment" || session.payment_status !== "paid") return null;
+  if (session.mode !== "payment" || session.payment_status !== "paid")
+    return null;
 
   return formatPaymentNotice(site, event, {
     kind: inferCheckoutKind(session),
@@ -156,11 +173,15 @@ function formatCheckoutCompleted(site: SiteConfig, event: Stripe.Event): Notice 
     currency: session.currency,
     email: session.customer_details?.email ?? session.customer_email,
     customer: formatCustomer(session.customer),
+    originCountry: readMetadataCountry(session.metadata),
     country: session.customer_details?.address?.country,
   });
 }
 
-function formatInvoicePaymentSucceeded(site: SiteConfig, event: Stripe.Event): Notice | null {
+function formatInvoicePaymentSucceeded(
+  site: SiteConfig,
+  event: Stripe.Event,
+): Notice | null {
   const invoice = event.data.object as Stripe.Invoice;
   if (!invoice.billing_reason?.startsWith("subscription")) return null;
   if (invoice.amount_paid <= 0) return null;
@@ -171,25 +192,38 @@ function formatInvoicePaymentSucceeded(site: SiteConfig, event: Stripe.Event): N
     currency: invoice.currency,
     email: invoice.customer_email,
     customer: formatCustomer(invoice.customer),
+    originCountry: readInvoiceOriginCountry(invoice),
     country: invoice.customer_address?.country,
   });
 }
 
-function formatInvoicePaymentFailed(site: SiteConfig, event: Stripe.Event): Notice {
+function formatInvoicePaymentFailed(
+  site: SiteConfig,
+  event: Stripe.Event,
+): Notice {
   const invoice = event.data.object as Stripe.Invoice;
 
   return {
     title: `⚠️ ${site.label} · 账单支付失败`,
     template: "red",
     fields: eventFields(event, [
-      { label: "应付金额", value: formatDisplayAmount(invoice.amount_due, invoice.currency) },
+      {
+        label: "应付金额",
+        value: formatDisplayAmount(invoice.amount_due, invoice.currency),
+      },
       customerField(invoice.customer_email, formatCustomer(invoice.customer)),
-      { label: "账单国家", value: formatCountry(invoice.customer_address?.country) },
+      {
+        label: "账单国家",
+        value: formatCountry(invoice.customer_address?.country),
+      },
     ]),
   };
 }
 
-function formatSubscriptionEvent(site: SiteConfig, event: Stripe.Event): Notice {
+function formatSubscriptionEvent(
+  site: SiteConfig,
+  event: Stripe.Event,
+): Notice {
   const subscription = event.data.object as Stripe.Subscription;
   const deleted = event.type === "customer.subscription.deleted";
 
@@ -211,9 +245,18 @@ function formatChargeRefunded(site: SiteConfig, event: Stripe.Event): Notice {
     title: `↩️ ${site.label} · 退款`,
     template: "orange",
     fields: eventFields(event, [
-      { label: "退款金额", value: formatDisplayAmount(charge.amount_refunded, charge.currency) },
-      customerField(charge.billing_details.email, formatCustomer(charge.customer)),
-      { label: "账单国家", value: formatCountry(charge.billing_details.address?.country) },
+      {
+        label: "退款金额",
+        value: formatDisplayAmount(charge.amount_refunded, charge.currency),
+      },
+      customerField(
+        charge.billing_details.email,
+        formatCustomer(charge.customer),
+      ),
+      {
+        label: "账单国家",
+        value: formatCountry(charge.billing_details.address?.country),
+      },
     ]),
   };
 }
@@ -227,8 +270,12 @@ function formatPaymentNotice(
     title: `💰 ${site.label} · 新${payment.kind}`,
     template: "green",
     fields: eventFields(event, [
-      { label: "金额", value: formatDisplayAmount(payment.amount, payment.currency) },
+      {
+        label: "金额",
+        value: formatDisplayAmount(payment.amount, payment.currency),
+      },
       customerField(payment.email, payment.customer),
+      { label: "来源国家", value: formatCountry(payment.originCountry) },
       { label: "账单国家", value: formatCountry(payment.country) },
       { label: "类型", value: payment.kind },
     ]),
@@ -270,13 +317,44 @@ function inferMetadataKind(metadata: Stripe.Metadata | null): string | null {
     .join(" ")
     .toLowerCase();
 
-  if (value.includes("credit") || value.includes("pack") || value.includes("积分")) return "积分包";
-  if (value.includes("year") || value.includes("annual") || value.includes("年")) return "年费";
-  if (value.includes("month") || value.includes("monthly") || value.includes("月")) return "月费";
+  if (
+    value.includes("credit") ||
+    value.includes("pack") ||
+    value.includes("积分")
+  )
+    return "积分包";
+  if (
+    value.includes("year") ||
+    value.includes("annual") ||
+    value.includes("年")
+  )
+    return "年费";
+  if (
+    value.includes("month") ||
+    value.includes("monthly") ||
+    value.includes("月")
+  )
+    return "月费";
   return null;
 }
 
-function readRecurringInterval(line: Stripe.InvoiceLineItem): string | undefined {
+function readMetadataCountry(metadata: Stripe.Metadata | null): string | null {
+  return metadata?.origin_country ?? null;
+}
+
+function readInvoiceOriginCountry(invoice: Stripe.Invoice): string | null {
+  return (
+    findFirstString(invoice as unknown as Record<string, unknown>, [
+      ["metadata", "origin_country"],
+      ["subscription_details", "metadata", "origin_country"],
+      ["parent", "subscription_details", "metadata", "origin_country"],
+    ]) ?? null
+  );
+}
+
+function readRecurringInterval(
+  line: Stripe.InvoiceLineItem,
+): string | undefined {
   const value = line as unknown as Record<string, unknown>;
   return findFirstString(value, [
     ["pricing", "price_details", "recurring", "interval"],
@@ -285,7 +363,10 @@ function readRecurringInterval(line: Stripe.InvoiceLineItem): string | undefined
   ]);
 }
 
-function findFirstString(value: Record<string, unknown>, paths: string[][]): string | undefined {
+function findFirstString(
+  value: Record<string, unknown>,
+  paths: string[][],
+): string | undefined {
   for (const path of paths) {
     const found = findString(value, path);
     if (found) return found;
@@ -294,7 +375,10 @@ function findFirstString(value: Record<string, unknown>, paths: string[][]): str
   return undefined;
 }
 
-function findString(value: Record<string, unknown>, path: string[]): string | undefined {
+function findString(
+  value: Record<string, unknown>,
+  path: string[],
+): string | undefined {
   let cursor: unknown = value;
 
   for (const key of path) {
@@ -317,8 +401,13 @@ function eventFields(
   ];
 }
 
-function customerField(email?: string | null, customer?: string | null): Notice["fields"][number] {
-  return email ? { label: "邮箱", value: email } : { label: "客户", value: customer };
+function customerField(
+  email?: string | null,
+  customer?: string | null,
+): Notice["fields"][number] {
+  return email
+    ? { label: "邮箱", value: email }
+    : { label: "客户", value: customer };
 }
 
 function formatDisplayAmount(
@@ -330,8 +419,12 @@ function formatDisplayAmount(
 
   const code = currency.toUpperCase();
   try {
-    const formatter = new Intl.NumberFormat("en-US", { style: "currency", currency: code });
-    const fractionDigits = formatter.resolvedOptions().maximumFractionDigits ?? 2;
+    const formatter = new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: code,
+    });
+    const fractionDigits =
+      formatter.resolvedOptions().maximumFractionDigits ?? 2;
     return formatter.format(amount / 10 ** fractionDigits);
   } catch {
     return `${amount} ${code}`;
@@ -339,7 +432,8 @@ function formatDisplayAmount(
 }
 
 function formatCustomer(
-  customer: string | Stripe.Customer | Stripe.DeletedCustomer | null | undefined,
+  customer:
+    string | Stripe.Customer | Stripe.DeletedCustomer | null | undefined,
 ): string | null {
   if (!customer) return null;
   if (typeof customer === "string") return customer;
@@ -366,7 +460,9 @@ function formatCountry(country: string | null | undefined): string | null {
 
 function buildFeishuCard(notice: Notice) {
   const content = notice.fields
-    .filter((field): field is { label: string; value: string } => Boolean(field.value))
+    .filter((field): field is { label: string; value: string } =>
+      Boolean(field.value),
+    )
     .map((field) => `**${field.label}**　${escapeCardText(field.value)}`)
     .join("\n");
 
@@ -419,7 +515,10 @@ async function sendFeishu(env: Env, notice: Notice): Promise<void> {
     throw new Error(`Feishu webhook rejected: ${body}`);
   }
 
-  console.log("feishu_delivered", JSON.stringify({ status: response.status, body }));
+  console.log(
+    "feishu_delivered",
+    JSON.stringify({ status: response.status, body }),
+  );
 }
 
 async function feishuSign(timestamp: string, secret: string): Promise<string> {
