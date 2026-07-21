@@ -10,6 +10,7 @@ type Env = {
   GPTIMAGE2_STRIPE_WEBHOOK_SECRET: string;
   ERASIO_STRIPE_WEBHOOK_SECRET: string;
   PLAYITOUT_STRIPE_WEBHOOK_SECRET: string;
+  MOTIOFY_STRIPE_WEBHOOK_SECRET: string;
   FEISHU_WEBHOOK_URL: string;
   FEISHU_BOT_SECRET: string;
 };
@@ -60,6 +61,11 @@ const sites: Record<string, SiteDefinition> = {
     slug: "playitout",
     label: "PlayItOut",
     stripeWebhookSecretName: "PLAYITOUT_STRIPE_WEBHOOK_SECRET",
+  },
+  "/motiofy/stripe/webhook": {
+    slug: "motiofy",
+    label: "Motiofy AI",
+    stripeWebhookSecretName: "MOTIOFY_STRIPE_WEBHOOK_SECRET",
   },
 };
 
