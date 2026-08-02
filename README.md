@@ -9,6 +9,7 @@ POST https://bingo.thecelesteway.com/gptimage2/stripe/webhook
 POST https://bingo.thecelesteway.com/erasio/stripe/webhook
 POST https://bingo.thecelesteway.com/playitout/stripe/webhook
 POST https://bingo.thecelesteway.com/motiofy/stripe/webhook
+POST https://bingo.thecelesteway.com/buildvisuals/stripe/webhook
 GET  https://bingo.thecelesteway.com/health
 ```
 
@@ -30,6 +31,10 @@ Stripe webhook secret: PLAYITOUT_STRIPE_WEBHOOK_SECRET
 slug: motiofy
 label: Motiofy AI
 Stripe webhook secret: MOTIOFY_STRIPE_WEBHOOK_SECRET
+
+slug: buildvisuals
+label: Build Visuals
+Stripe webhook secret: BUILDVISUALS_STRIPE_WEBHOOK_SECRET
 ```
 
 ## Required Secrets
@@ -41,6 +46,7 @@ npx wrangler secret put GPTIMAGE2_STRIPE_WEBHOOK_SECRET
 npx wrangler secret put ERASIO_STRIPE_WEBHOOK_SECRET
 npx wrangler secret put PLAYITOUT_STRIPE_WEBHOOK_SECRET
 npx wrangler secret put MOTIOFY_STRIPE_WEBHOOK_SECRET
+npx wrangler secret put BUILDVISUALS_STRIPE_WEBHOOK_SECRET
 npx wrangler secret put FEISHU_WEBHOOK_URL
 npx wrangler secret put FEISHU_BOT_SECRET
 ```
@@ -62,6 +68,10 @@ PLAYITOUT_STRIPE_WEBHOOK_SECRET
 
 MOTIOFY_STRIPE_WEBHOOK_SECRET
   Stripe endpoint signing secret for /motiofy/stripe/webhook.
+  Value format: whsec_xxx.
+
+BUILDVISUALS_STRIPE_WEBHOOK_SECRET
+  Stripe endpoint signing secret for /buildvisuals/stripe/webhook.
   Value format: whsec_xxx.
 
 FEISHU_WEBHOOK_URL
@@ -153,6 +163,7 @@ type Env = {
   ERASIO_STRIPE_WEBHOOK_SECRET: string;
   PLAYITOUT_STRIPE_WEBHOOK_SECRET: string;
   MOTIOFY_STRIPE_WEBHOOK_SECRET: string;
+  BUILDVISUALS_STRIPE_WEBHOOK_SECRET: string;
   FEISHU_WEBHOOK_URL: string;
   FEISHU_BOT_SECRET: string;
 };

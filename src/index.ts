@@ -11,6 +11,7 @@ type Env = {
   ERASIO_STRIPE_WEBHOOK_SECRET: string;
   PLAYITOUT_STRIPE_WEBHOOK_SECRET: string;
   MOTIOFY_STRIPE_WEBHOOK_SECRET: string;
+  BUILDVISUALS_STRIPE_WEBHOOK_SECRET: string;
   FEISHU_WEBHOOK_URL: string;
   FEISHU_BOT_SECRET: string;
 };
@@ -66,6 +67,11 @@ const sites: Record<string, SiteDefinition> = {
     slug: "motiofy",
     label: "Motiofy AI",
     stripeWebhookSecretName: "MOTIOFY_STRIPE_WEBHOOK_SECRET",
+  },
+  "/buildvisuals/stripe/webhook": {
+    slug: "buildvisuals",
+    label: "Build Visuals",
+    stripeWebhookSecretName: "BUILDVISUALS_STRIPE_WEBHOOK_SECRET",
   },
 };
 
