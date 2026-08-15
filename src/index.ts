@@ -7,7 +7,6 @@
 import Stripe from "stripe";
 
 type Env = {
-  GPTIMAGE2_STRIPE_WEBHOOK_SECRET: string;
   ERASIO_STRIPE_WEBHOOK_SECRET: string;
   PLAYITOUT_STRIPE_WEBHOOK_SECRET: string;
   MOTIOFY_STRIPE_WEBHOOK_SECRET: string;
@@ -48,11 +47,6 @@ type PaymentDetails = {
 };
 
 const sites: Record<string, SiteDefinition> = {
-  "/gptimage2/stripe/webhook": {
-    slug: "gptimage2",
-    label: "GPT Image 2",
-    stripeWebhookSecretName: "GPTIMAGE2_STRIPE_WEBHOOK_SECRET",
-  },
   "/erasio/stripe/webhook": {
     slug: "erasio",
     label: "Erasio",

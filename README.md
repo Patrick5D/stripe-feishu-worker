@@ -5,7 +5,6 @@ Cloudflare Worker that verifies Stripe webhook events and sends selected payment
 ## Current Deployment
 
 ```text
-POST https://bingo.thecelesteway.com/gptimage2/stripe/webhook
 POST https://bingo.thecelesteway.com/erasio/stripe/webhook
 POST https://bingo.thecelesteway.com/playitout/stripe/webhook
 POST https://bingo.thecelesteway.com/motiofy/stripe/webhook
@@ -16,10 +15,6 @@ GET  https://bingo.thecelesteway.com/health
 Current projects:
 
 ```text
-slug: gptimage2
-label: GPT Image 2
-Stripe webhook secret: GPTIMAGE2_STRIPE_WEBHOOK_SECRET
-
 slug: erasio
 label: Erasio
 Stripe webhook secret: ERASIO_STRIPE_WEBHOOK_SECRET
@@ -42,7 +37,6 @@ Stripe webhook secret: BUILDVISUALS_STRIPE_WEBHOOK_SECRET
 Configure secrets with Wrangler. Do not commit real values.
 
 ```bash
-npx wrangler secret put GPTIMAGE2_STRIPE_WEBHOOK_SECRET
 npx wrangler secret put ERASIO_STRIPE_WEBHOOK_SECRET
 npx wrangler secret put PLAYITOUT_STRIPE_WEBHOOK_SECRET
 npx wrangler secret put MOTIOFY_STRIPE_WEBHOOK_SECRET
@@ -54,10 +48,6 @@ npx wrangler secret put FEISHU_BOT_SECRET
 Secret meaning:
 
 ```text
-GPTIMAGE2_STRIPE_WEBHOOK_SECRET
-  Stripe endpoint signing secret for /gptimage2/stripe/webhook.
-  Value format: whsec_xxx.
-
 ERASIO_STRIPE_WEBHOOK_SECRET
   Stripe endpoint signing secret for /erasio/stripe/webhook.
   Value format: whsec_xxx.
@@ -159,7 +149,6 @@ Edit `src/index.ts`:
 
 ```ts
 type Env = {
-  GPTIMAGE2_STRIPE_WEBHOOK_SECRET: string;
   ERASIO_STRIPE_WEBHOOK_SECRET: string;
   PLAYITOUT_STRIPE_WEBHOOK_SECRET: string;
   MOTIOFY_STRIPE_WEBHOOK_SECRET: string;
