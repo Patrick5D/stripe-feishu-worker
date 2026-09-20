@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 依赖 stripe 的 webhook 验签，依赖 Cloudflare Workers 的 fetch/crypto 运行时
- * [OUTPUT]: 对外提供多站点 Stripe webhook 路由，把 Stripe 付款事件转成飞书卡片通知
+ * [OUTPUT]: 对外提供多站点 Stripe webhook 路由，把有业务价值的 Stripe 付款事件转成飞书卡片通知，并过滤未付款订阅过期清理
  * [POS]: src 的唯一 Worker 入口，负责站点路由、事件格式化、飞书投递
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -44,6 +44,14 @@ type PaymentDetails = {
   customer?: string | null;
   originCountry?: string | null;
   country?: string | null;
+  notificationContext?: NotificationContext;
+};
+
+type NotificationContext = {
+  signupAt?: string;
+  firstTouchSource?: string;
+  firstTouchMedium?: string;
+  firstTouchCampaign?: string;
 };
 
 const sites: Record<string, SiteDefinition> = {
@@ -145,7 +153,10 @@ function getSite(pathname: string, env: Env): SiteConfig | null {
   };
 }
 
-function formatEvent(site: SiteConfig, event: Stripe.Event): Notice | null {
+export function formatEvent(
+  site: SiteConfig,
+  event: Stripe.Event,
+): Notice | null {
   switch (event.type) {
     case "checkout.session.completed":
     case "checkout.session.async_payment_succeeded":
@@ -181,6 +192,7 @@ function formatCheckoutCompleted(
     customer: formatCustomer(session.customer),
     originCountry: readMetadataCountry(session.metadata),
     country: session.customer_details?.address?.country,
+    notificationContext: readNotificationContext(session.metadata),
   });
 }
 
@@ -200,6 +212,7 @@ function formatInvoicePaymentSucceeded(
     customer: formatCustomer(invoice.customer),
     originCountry: readInvoiceOriginCountry(invoice),
     country: invoice.customer_address?.country,
+    notificationContext: readInvoiceNotificationContext(invoice),
   });
 }
 
@@ -229,8 +242,10 @@ function formatInvoicePaymentFailed(
 function formatSubscriptionEvent(
   site: SiteConfig,
   event: Stripe.Event,
-): Notice {
+): Notice | null {
   const subscription = event.data.object as Stripe.Subscription;
+  if (isUnpaidSubscriptionExpiration(event, subscription)) return null;
+
   const deleted = event.type === "customer.subscription.deleted";
 
   return {
@@ -242,6 +257,22 @@ function formatSubscriptionEvent(
       { label: "事件类型", value: event.type },
     ]),
   };
+}
+
+function isUnpaidSubscriptionExpiration(
+  event: Stripe.Event,
+  subscription: Stripe.Subscription,
+): boolean {
+  if (event.type !== "customer.subscription.updated") return false;
+
+  const previousStatus = (
+    event.data.previous_attributes as Partial<Stripe.Subscription> | undefined
+  )?.status;
+
+  return (
+    previousStatus === "incomplete" &&
+    subscription.status === "incomplete_expired"
+  );
 }
 
 function formatChargeRefunded(site: SiteConfig, event: Stripe.Event): Notice {
@@ -283,6 +314,18 @@ function formatPaymentNotice(
       customerField(payment.email, payment.customer),
       { label: "来源国家", value: formatCountry(payment.originCountry) },
       { label: "账单国家", value: formatCountry(payment.country) },
+      {
+        label: "注册时间",
+        value: formatSignupAt(payment.notificationContext?.signupAt),
+      },
+      {
+        label: "首次来源",
+        value: formatFirstTouch(payment.notificationContext),
+      },
+      {
+        label: "来源活动",
+        value: payment.notificationContext?.firstTouchCampaign,
+      },
       { label: "类型", value: payment.kind },
     ]),
   };
@@ -346,6 +389,41 @@ function inferMetadataKind(metadata: Stripe.Metadata | null): string | null {
 
 function readMetadataCountry(metadata: Stripe.Metadata | null): string | null {
   return metadata?.origin_country ?? null;
+}
+
+function readNotificationContext(
+  metadata: Stripe.Metadata | null,
+): NotificationContext {
+  return {
+    signupAt: metadata?.signup_at,
+    firstTouchSource: metadata?.first_touch_source ?? metadata?.src,
+    firstTouchMedium: metadata?.first_touch_medium ?? metadata?.med,
+    firstTouchCampaign: metadata?.first_touch_campaign ?? metadata?.cmp,
+  };
+}
+
+function readInvoiceNotificationContext(
+  invoice: Stripe.Invoice,
+): NotificationContext {
+  const value = invoice as unknown as Record<string, unknown>;
+  const read = (...keys: string[]) =>
+    findFirstString(value, [
+      ...keys.map((key) => ["metadata", key]),
+      ...keys.map((key) => ["subscription_details", "metadata", key]),
+      ...keys.map((key) => [
+        "parent",
+        "subscription_details",
+        "metadata",
+        key,
+      ]),
+    ]);
+
+  return {
+    signupAt: read("signup_at"),
+    firstTouchSource: read("first_touch_source", "src"),
+    firstTouchMedium: read("first_touch_medium", "med"),
+    firstTouchCampaign: read("first_touch_campaign", "cmp"),
+  };
 }
 
 function readInvoiceOriginCountry(invoice: Stripe.Invoice): string | null {
@@ -450,6 +528,20 @@ function formatCustomer(
 function formatUnix(seconds: number): string {
   const shanghaiSeconds = seconds + 8 * 60 * 60;
   return `${new Date(shanghaiSeconds * 1000).toISOString().slice(0, 19).replace("T", " ")} GMT+8`;
+}
+
+function formatSignupAt(value?: string): string | null {
+  if (!value) return null;
+  const milliseconds = Date.parse(value);
+  if (!Number.isFinite(milliseconds)) return null;
+  return formatUnix(Math.floor(milliseconds / 1000));
+}
+
+function formatFirstTouch(context?: NotificationContext): string | null {
+  if (!context?.firstTouchSource) return null;
+  return [context.firstTouchSource, context.firstTouchMedium]
+    .filter(Boolean)
+    .join(" / ");
 }
 
 function formatCountry(country: string | null | undefined): string | null {

@@ -101,6 +101,9 @@ Payment card fields:
 邮箱, falling back to the Stripe customer id
 来源国家, from Checkout/Subscription metadata origin_country
 账单国家, with an ISO country flag
+注册时间, from low-sensitivity Checkout/Subscription metadata `signup_at`
+首次来源, from `first_touch_source` plus optional `first_touch_medium`
+来源活动, from optional `first_touch_campaign`
 类型
 环境, live or test
 时间, Asia/Shanghai
@@ -108,6 +111,9 @@ Stripe event id
 ```
 
 Missing email and country values are omitted instead of displaying `unknown`.
+Missing registration or acquisition metadata is also omitted, preserving
+backward compatibility for existing Checkout Sessions and projects that do not
+yet capture attribution.
 Checkout email prefers `customer_details.email`; invoice notifications use the
 finalized customer snapshot on the invoice.
 
@@ -120,6 +126,11 @@ customer.subscription.updated
 customer.subscription.deleted
 charge.refunded
 ```
+
+`customer.subscription.created` still reports the first subscription creation.
+The later Stripe cleanup transition from `incomplete` to
+`incomplete_expired` is ignored because it represents an unpaid first invoice
+expiring, not a new customer action or successful payment.
 
 ## Add A New Project
 

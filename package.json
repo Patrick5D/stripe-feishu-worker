@@ -6,6 +6,7 @@
   "scripts": {
     "deploy": "wrangler deploy",
     "dev": "wrangler dev",
+    "test": "node --experimental-strip-types --test src/index.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [],
