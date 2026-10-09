@@ -1,6 +1,6 @@
 # Stripe Feishu Worker
 
-Cloudflare Worker that verifies Stripe webhook events and sends selected payment notifications to a Feishu custom group bot.
+Cloudflare Worker that verifies Stripe and Waffo webhook events and sends payment notifications to a Feishu custom group bot. It does not change product orders or credit balances.
 
 ## Current Deployment
 
@@ -9,6 +9,7 @@ POST https://bingo.thecelesteway.com/erasio/stripe/webhook
 POST https://bingo.thecelesteway.com/playitout/stripe/webhook
 POST https://bingo.thecelesteway.com/motiofy/stripe/webhook
 POST https://bingo.thecelesteway.com/buildvisuals/stripe/webhook
+POST https://bingo.thecelesteway.com/buildvisuals/waffo/webhook
 GET  https://bingo.thecelesteway.com/health
 ```
 
@@ -286,3 +287,59 @@ npx wrangler deploy
 - Store runtime secrets only with `wrangler secret put`.
 - The public endpoint is safe to expose because Stripe signatures are verified before notifications are sent.
 - Test and live Stripe endpoints have different `whsec_xxx` values. Use separate paths or separate Workers if both must be active.
+
+## Waffo / Build Visuals
+
+The Waffo route accepts only `order.completed` for store
+`STO_6UnVcck9q54NexgyLmWssn`. Production sets `WAFFO_ENVIRONMENT=prod`.
+It verifies the unchanged raw body using `x-waffo-signature` and the SDK's
+platform public key, then checks store and mode. This Worker needs no Waffo
+merchant private key or Stripe-style signing secret.
+
+`chargedAmount` is already a display amount (`"9.00"` means $9, not nine cents).
+Missing charged amounts are omitted rather than replaced with zero or a list price.
+Cards include the Waffo channel, product, order, email, country, registration and
+attribution metadata where available. Other Waffo event types return 200 without
+sending a card. Test-mode cards have an explicit test title.
+
+The existing product callback remains responsible for credits:
+`https://buildvisuals.com/api/payment/notify/waffo`.
+Add a second **Raw HTTP / Production** webhook in Waffo:
+`https://bingo.thecelesteway.com/buildvisuals/waffo/webhook`, subscribing only to
+`order.completed`. Deploy the route before adding this webhook.
+
+Unsigned probes must return `400 Missing Waffo signature`.
+A signed supported event returns 200 only after Feishu HTTP and business success.
+Feishu failures propagate to a non-2xx response so Waffo can retry.
+Delivery is at least once: this sidecar has no persistent deduplication, and a
+retry may produce a duplicate card. Event IDs remain visible for identification.
+
+For integration testing, run the same Worker locally with
+`WAFFO_ENVIRONMENT=test` and a temporary test-mode HTTP webhook. Use a real Waffo
+sandbox checkout; the merchant private key cannot forge platform webhook signatures.
+Remove the temporary webhook and tunnel afterward. Never weaken the production
+route to accept test events. Existing Stripe routes and secrets remain unchanged.
+
+`nodejs_compat` supplies the Node crypto APIs used by `@waffo/pancake-ts`.
+The SDK is pinned to 0.25.0; its default timestamp window is preserved.
+
+
+### Verified Waffo Integration (2026-10-09)
+
+- Production notification webhook ID: `3414e739-6bfb-4d55-b797-05fe46cce478`.
+- Mode: production; event: `order.completed`.
+- The product credit webhook remains configured separately.
+- A real sandbox checkout delivered event `PAY_4gvA1ogzDwIFBjTRS26wH1` through
+  the deployed Worker to the existing Feishu bot.
+- Worker HTTP 200, Feishu HTTP 200 and business code 0 were observed.
+- The group visibly received one test card showing $9.00, Waffo, test mode and
+  registration/acquisition metadata. No real charge was created.
+- A temporary test-only route and test webhook were used for this smoke, then
+  removed. The production path was never changed to accept test mode.
+- 9 tests and TypeScript checks pass; no persistent deduplication store added.
+
+- Final Worker version: `65a3e1b9-0582-4bb9-bf8a-02fbf9e8c522`.
+- Final probes: health 200; unsigned Waffo 400; all four existing unsigned
+  Stripe routes 400; removed test route 404.
+- The Feishu bot webhook/signing secrets were reused without reading, copying
+  or changing their values. No additional Worker secret or Keychain item was needed.

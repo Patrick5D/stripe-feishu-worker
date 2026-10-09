@@ -11,5 +11,11 @@
   ],
   "observability": {
     "enabled": true
+  },
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "vars": {
+    "WAFFO_ENVIRONMENT": "prod"
   }
 }

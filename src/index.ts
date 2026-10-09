@@ -1,12 +1,18 @@
 /**
- * [INPUT]: 依赖 stripe 的 webhook 验签，依赖 Cloudflare Workers 的 fetch/crypto 运行时
- * [OUTPUT]: 对外提供多站点 Stripe webhook 路由，把有业务价值的 Stripe 付款事件转成飞书卡片通知，并过滤未付款订阅过期清理
- * [POS]: src 的唯一 Worker 入口，负责站点路由、事件格式化、飞书投递
+ * [INPUT]: 依赖 Stripe 与 Waffo SDK 的 webhook 验签，依赖 Cloudflare Workers 的 fetch/crypto 运行时
+ * [OUTPUT]: 对外提供多站点 Stripe 与 Build Visuals Waffo webhook 路由，把付款事件转成飞书卡片通知，并过滤未付款订阅过期清理
+ * [POS]: src 的唯一 Worker 入口，负责站点路由、事件格式化、飞书投递；不修改订单或积分
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import Stripe from "stripe";
+import {
+  verifyWebhook,
+  type WebhookEvent,
+  type WebhookEventData,
+} from "@waffo/pancake-ts";
 
 type Env = {
+  WAFFO_ENVIRONMENT?: "test" | "prod";
   ERASIO_STRIPE_WEBHOOK_SECRET: string;
   PLAYITOUT_STRIPE_WEBHOOK_SECRET: string;
   MOTIOFY_STRIPE_WEBHOOK_SECRET: string;
@@ -88,6 +94,10 @@ export default {
       return Response.json({ ok: true, service: "stripe-feishu-worker" });
     }
 
+    if (url.pathname === "/buildvisuals/waffo/webhook") {
+      return handleWaffoWebhook(request, env);
+    }
+
     const site = getSite(url.pathname, env);
     if (!site) {
       return new Response("Not Found", { status: 404 });
@@ -141,6 +151,103 @@ export default {
     return Response.json({ ok: true, site: site.slug, event: event.type });
   },
 };
+
+// ---- Waffo：平台公钥验签，仅通知一次性付款 ----
+async function handleWaffoWebhook(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  if (request.method !== "POST")
+    return new Response("Method Not Allowed", { status: 405 });
+  const signature = request.headers.get("x-waffo-signature");
+  if (!signature)
+    return new Response("Missing Waffo signature", { status: 400 });
+  const environment = env.WAFFO_ENVIRONMENT === "test" ? "test" : "prod";
+  let event: WebhookEvent<WebhookEventData>;
+  try {
+    event = verifyWebhook<WebhookEventData>(await request.text(), signature, {
+      environment,
+    });
+    if (
+      event.storeId !== "STO_6UnVcck9q54NexgyLmWssn" ||
+      event.mode !== environment
+    ) {
+      return new Response("Waffo store or environment mismatch", {
+        status: 400,
+      });
+    }
+  } catch {
+    return new Response("Invalid Waffo signature", { status: 400 });
+  }
+  const message = formatWaffoEvent(event);
+  console.log(
+    "waffo_event",
+    JSON.stringify({
+      site: "buildvisuals",
+      type: event.eventType,
+      id: event.id,
+      hasMessage: Boolean(message),
+    }),
+  );
+  if (message) await sendFeishu(env, message);
+  return Response.json({
+    ok: true,
+    site: "buildvisuals",
+    provider: "waffo",
+    event: event.eventType,
+  });
+}
+
+export function formatWaffoEvent(
+  event: WebhookEvent<WebhookEventData>,
+): Notice | null {
+  if (event.eventType !== "order.completed") return null;
+  const data = event.data;
+  const metadata = data.orderMetadata ?? null;
+  const context = readNotificationContext(metadata);
+  const country = data.billingDetail?.country;
+  return {
+    title: `${event.mode === "test" ? "🧪 测试" : "💰"} Build Visuals · 新积分包`,
+    template: "green",
+    fields: [
+      {
+        label: "金额",
+        value: formatWaffoAmount(data.chargedAmount, data.currency),
+      },
+      customerField(data.buyerEmail),
+      { label: "支付渠道", value: "Waffo" },
+      { label: "商品", value: data.productName },
+      { label: "来源国家", value: formatCountry(metadata?.origin_country) },
+      {
+        label: "账单国家",
+        value: formatCountry(typeof country === "string" ? country : null),
+      },
+      { label: "注册时间", value: formatSignupAt(context.signupAt) },
+      { label: "首次来源", value: formatFirstTouch(context) },
+      { label: "来源活动", value: context.firstTouchCampaign },
+      { label: "订单", value: data.orderMerchantExternalId ?? data.orderId },
+      { label: "类型", value: "积分包" },
+      { label: "环境", value: event.mode === "prod" ? "正式" : "测试" },
+      { label: "时间", value: formatSignupAt(event.timestamp) },
+      { label: "事件", value: event.id },
+    ],
+  };
+}
+
+function formatWaffoAmount(
+  value: string | undefined,
+  currency: string,
+): string | null {
+  if (!value?.trim() || !Number.isFinite(Number(value))) return null;
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency,
+    }).format(Number(value));
+  } catch {
+    return `${value} ${currency}`;
+  }
+}
 
 function getSite(pathname: string, env: Env): SiteConfig | null {
   const site = sites[pathname];
@@ -410,12 +517,7 @@ function readInvoiceNotificationContext(
     findFirstString(value, [
       ...keys.map((key) => ["metadata", key]),
       ...keys.map((key) => ["subscription_details", "metadata", key]),
-      ...keys.map((key) => [
-        "parent",
-        "subscription_details",
-        "metadata",
-        key,
-      ]),
+      ...keys.map((key) => ["parent", "subscription_details", "metadata", key]),
     ]);
 
   return {
@@ -517,7 +619,11 @@ function formatDisplayAmount(
 
 function formatCustomer(
   customer:
-    string | Stripe.Customer | Stripe.DeletedCustomer | null | undefined,
+    | string
+    | Stripe.Customer
+    | Stripe.DeletedCustomer
+    | null
+    | undefined,
 ): string | null {
   if (!customer) return null;
   if (typeof customer === "string") return customer;

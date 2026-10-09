@@ -1,6 +1,6 @@
 /**
- * [INPUT]: 依赖 node:test、node:assert/strict 与 formatEvent 的纯 Stripe 事件格式化合同
- * [OUTPUT]: 验证 Checkout/Invoice 注册归因、compact metadata、旧事件兼容、非法日期与未付款订阅过期过滤
+ * [INPUT]: 依赖 node:test、node:assert/strict 与 formatEvent 的Stripe/Waffo 事件合同与临时 RSA 测试密钥
+ * [OUTPUT]: 验证 Checkout/Invoice 注册归因、compact metadata、旧事件兼容、非法日期、平台验签、环境隔离与飞书投递失败传播
  * [POS]: src 的 Worker 纯行为回归测试，不发送飞书请求、不读取 secret
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -9,7 +9,8 @@ import test from "node:test";
 
 import type Stripe from "stripe";
 
-import { formatEvent } from "./index.ts";
+import worker, { formatEvent, formatWaffoEvent } from "./index.ts";
+import { generateKeyPairSync, sign, createHmac } from "node:crypto";
 
 const site = {
   slug: "motiofy",
@@ -36,10 +37,7 @@ function checkoutEvent(metadata: Stripe.Metadata | null): Stripe.Event {
   } as unknown as Stripe.Event;
 }
 
-function fieldValue(
-  notice: ReturnType<typeof formatEvent>,
-  label: string,
-) {
+function fieldValue(notice: ReturnType<typeof formatEvent>, label: string) {
   return notice?.fields.find((field) => field.label === label)?.value;
 }
 
@@ -122,4 +120,168 @@ test("unpaid incomplete subscription expiration is ignored", () => {
   } as unknown as Stripe.Event;
 
   assert.equal(formatEvent(site, event), null);
+});
+
+const storeId = "STO_6UnVcck9q54NexgyLmWssn";
+function waffoEvent() {
+  return {
+    id: "PAY_fixture",
+    timestamp: "2026-10-09T02:00:00.000Z",
+    eventType: "order.completed",
+    eventId: "PAY_fixture",
+    storeId,
+    storeName: "Build Visuals",
+    mode: "prod",
+    data: {
+      orderId: "ORD_fixture",
+      buyerEmail: "test@example.com",
+      currency: "USD",
+      chargedAmount: "9.00",
+      amount: "9.00",
+      taxAmount: "0.00",
+      productName: "Mini Pack",
+      billingDetail: { country: "CN" },
+      orderMerchantExternalId: "local1",
+      orderMetadata: {
+        signup_at: "2026-10-01T00:00:00Z",
+        first_touch_source: "google",
+        origin_country: "US",
+      },
+    },
+  } as any;
+}
+
+test("Waffo formats display amounts, ISO dates and attribution without Stripe cent conversion", () => {
+  const notice = formatWaffoEvent(waffoEvent());
+  assert.equal(fieldValue(notice, "金额"), "$9.00");
+  assert.equal(fieldValue(notice, "支付渠道"), "Waffo");
+  assert.equal(fieldValue(notice, "账单国家"), "🇨🇳 CN");
+  assert.equal(fieldValue(notice, "来源国家"), "🇺🇸 US");
+  assert.equal(fieldValue(notice, "首次来源"), "google");
+  assert.equal(fieldValue(notice, "时间"), "2026-10-09 10:00:00 GMT+8");
+});
+
+test("Waffo skips other event types and does not fabricate missing charged amounts", () => {
+  assert.equal(
+    formatWaffoEvent({ ...waffoEvent(), eventType: "refund.succeeded" }),
+    null,
+  );
+  const event = waffoEvent();
+  delete event.data.chargedAmount;
+  delete event.data.orderMetadata;
+  const notice = formatWaffoEvent({ ...event, mode: "test" });
+  assert.equal(fieldValue(notice, "金额"), null);
+  assert.equal(fieldValue(notice, "首次来源"), null);
+  assert.match(notice!.title, /测试/);
+});
+
+test("Waffo route verifies raw signatures, environment and store before delivering", async (t) => {
+  const keys = generateKeyPairSync("rsa", {
+    modulusLength: 2048,
+    privateKeyEncoding: { type: "pkcs8", format: "pem" },
+    publicKeyEncoding: { type: "spki", format: "pem" },
+  });
+  const previous = process.env.WAFFO_WEBHOOK_PROD_PUBLIC_KEY;
+  process.env.WAFFO_WEBHOOK_PROD_PUBLIC_KEY = keys.publicKey;
+  t.after(() => {
+    if (previous === undefined)
+      delete process.env.WAFFO_WEBHOOK_PROD_PUBLIC_KEY;
+    else process.env.WAFFO_WEBHOOK_PROD_PUBLIC_KEY = previous;
+  });
+  const sent: any[] = [];
+  const fetchMock = t.mock.method(
+    globalThis,
+    "fetch",
+    async (_url: any, init: any) => {
+      sent.push(JSON.parse(init.body));
+      return Response.json({ code: 0 });
+    },
+  );
+  const env = {
+    WAFFO_ENVIRONMENT: "prod",
+    FEISHU_WEBHOOK_URL: "https://example.invalid/test-bot",
+    FEISHU_BOT_SECRET: "test-only-fixture",
+  } as any;
+  const path = "https://example.invalid/buildvisuals/waffo/webhook";
+  const request = (event: any, timestamp = Date.now()) => {
+    const body = JSON.stringify(event);
+    const sig = sign(
+      "RSA-SHA256",
+      Buffer.from(`${timestamp}.${body}`),
+      keys.privateKey,
+    ).toString("base64");
+    return new Request(path, {
+      method: "POST",
+      body,
+      headers: { "x-waffo-signature": `t=${timestamp},v1=${sig}` },
+    });
+  };
+  for (const req of [
+    new Request(path, { method: "POST" }),
+    request({ ...waffoEvent(), mode: "test" }),
+    request({ ...waffoEvent(), storeId: "STO_other" }),
+    request(waffoEvent(), Date.now() - 46 * 60 * 1000),
+    new Request(path, {
+      method: "POST",
+      body: "{}",
+      headers: { "x-waffo-signature": "t=0,v1=invalid" },
+    }),
+  ]) {
+    assert.equal((await worker.fetch(req, env)).status, 400);
+  }
+  assert.equal(sent.length, 0);
+  assert.equal((await worker.fetch(new Request(path), env)).status, 405);
+  assert.equal(
+    (
+      await worker.fetch(
+        request({ ...waffoEvent(), eventType: "subscription.activated" }),
+        env,
+      )
+    ).status,
+    200,
+  );
+  assert.equal(sent.length, 0);
+  assert.equal((await worker.fetch(request(waffoEvent()), env)).status, 200);
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].card.body.elements[0].content, /\$9\.00/);
+  fetchMock.mock.mockImplementation(async () => Response.json({ code: 19024 }));
+  await assert.rejects(
+    worker.fetch(request(waffoEvent()), env),
+    /Feishu webhook rejected/,
+  );
+  fetchMock.mock.mockImplementation(
+    async () => new Response("unavailable", { status: 503 }),
+  );
+  await assert.rejects(
+    worker.fetch(request(waffoEvent()), env),
+    /Feishu webhook failed/,
+  );
+});
+
+test("Stripe checkout still verifies HMAC and shares the existing Feishu sender", async (t) => {
+  let deliveries = 0;
+  t.mock.method(globalThis, "fetch", async () => {
+    deliveries++;
+    return Response.json({ StatusCode: 0 });
+  });
+  const env = {
+    BUILDVISUALS_STRIPE_WEBHOOK_SECRET: "test-only-signing-fixture",
+    FEISHU_WEBHOOK_URL: "https://example.invalid/bot",
+    FEISHU_BOT_SECRET: "test-only-bot-fixture",
+  } as any;
+  const body = JSON.stringify(checkoutEvent(null));
+  const stamp = Math.floor(Date.now() / 1000);
+  const signature = createHmac("sha256", env.BUILDVISUALS_STRIPE_WEBHOOK_SECRET)
+    .update(`${stamp}.${body}`)
+    .digest("hex");
+  const response = await worker.fetch(
+    new Request("https://example.invalid/buildvisuals/stripe/webhook", {
+      method: "POST",
+      body,
+      headers: { "stripe-signature": `t=${stamp},v1=${signature}` },
+    }),
+    env,
+  );
+  assert.equal(response.status, 200);
+  assert.equal(deliveries, 1);
 });

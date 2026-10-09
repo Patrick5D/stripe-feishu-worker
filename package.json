@@ -14,6 +14,7 @@
   "license": "UNLICENSED",
   "type": "module",
   "dependencies": {
+    "@waffo/pancake-ts": "0.25.0",
     "stripe": "^22.3.0"
   },
   "devDependencies": {
