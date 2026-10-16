@@ -16,3 +16,5 @@ wrangler.jsonc - Cloudflare Worker 部署配置，绑定 bingo.thecelesteway.com
 法则: 平台签名先验·飞书只通知·密钥只进 secret
 
 Waffo 仅接收 Build Visuals 店铺的 order.completed。生产固定 prod，复用飞书机器人；不保存 Waffo 商户私钥。
+
+通知环境隔离：验签后的测试事件只发旧快乐群，正式事件只发新快乐群。配置缺失直接失败，禁止跨群回退。

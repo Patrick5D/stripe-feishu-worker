@@ -1,5 +1,5 @@
 /**
- * [INPUT]: 依赖 node:test、node:assert/strict 与 formatEvent 的Stripe/Waffo 事件合同与临时 RSA 测试密钥
+ * [INPUT]: 依赖 node:test、node:assert/strict 与 formatEvent 的Stripe/Waffo 事件合同、测试/正式群隔离与临时 RSA 测试密钥
  * [OUTPUT]: 验证 Checkout/Invoice 注册归因、compact metadata、旧事件兼容、非法日期、平台验签、环境隔离与飞书投递失败传播
  * [POS]: src 的 Worker 纯行为回归测试，不发送飞书请求、不读取 secret
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -284,4 +284,42 @@ test("Stripe checkout still verifies HMAC and shares the existing Feishu sender"
   );
   assert.equal(response.status, 200);
   assert.equal(deliveries, 1);
+});
+
+
+test("verified Stripe modes use isolated bots without fallback", async (t) => {
+  const sent: Array<{ url: string; payload: any }> = [];
+  t.mock.method(globalThis, "fetch", async (url: any, init: any) => {
+    sent.push({ url: String(url), payload: JSON.parse(init.body) });
+    return Response.json({ code: 0 });
+  });
+  const env = {
+    ZOMBIECOUPLEVID_STRIPE_WEBHOOK_SECRET: "fixture-signing",
+    FEISHU_WEBHOOK_URL: "https://example.invalid/live",
+    FEISHU_BOT_SECRET: "fixture-live",
+    FEISHU_TEST_WEBHOOK_URL: "https://example.invalid/test",
+    FEISHU_TEST_BOT_SECRET: "fixture-test",
+  } as any;
+  const request = (live: any) => {
+    const body = JSON.stringify({ ...checkoutEvent(null), livemode: live });
+    const stamp = Math.floor(Date.now() / 1000);
+    const sig = createHmac("sha256", env.ZOMBIECOUPLEVID_STRIPE_WEBHOOK_SECRET)
+      .update(`${stamp}.${body}`).digest("hex");
+    return new Request("https://example.invalid/zombiecouplevid/stripe/webhook", {
+      method: "POST", body,
+      headers: { "stripe-signature": `t=${stamp},v1=${sig}` },
+    });
+  };
+  for (const live of [false, true]) {
+    assert.equal((await worker.fetch(request(live), env)).status, 200);
+  }
+  assert.deepEqual(sent.map(x => x.url), [env.FEISHU_TEST_WEBHOOK_URL, env.FEISHU_WEBHOOK_URL]);
+  assert.match(JSON.stringify(sent[0].payload.card), /🧪 测试/);
+  for (const [index, secret] of [env.FEISHU_TEST_BOT_SECRET, env.FEISHU_BOT_SECRET].entries()) {
+    assert.equal(sent[index].payload.sign, createHmac("sha256", `${sent[index].payload.timestamp}\n${secret}`).update("").digest("base64"));
+  }
+  await assert.rejects(worker.fetch(request(false), { ...env, FEISHU_TEST_WEBHOOK_URL: undefined }), /Missing Feishu test configuration/);
+  await assert.rejects(worker.fetch(request(true), { ...env, FEISHU_WEBHOOK_URL: undefined }), /Missing Feishu live configuration/);
+  await assert.rejects(worker.fetch(request(undefined), env), /Missing event environment/);
+  assert.equal(sent.length, 2);
 });

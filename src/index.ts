@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 依赖 Stripe 与 Waffo SDK 的 webhook 验签，依赖 Cloudflare Workers 的 fetch/crypto 运行时
- * [OUTPUT]: 对外提供多站点 Stripe 与 Build Visuals Waffo webhook 路由，把付款事件转成飞书卡片通知，并过滤未付款订阅过期清理
+ * [OUTPUT]: 对外提供多站点 Stripe 与 Build Visuals Waffo webhook 路由，按验签后的环境分流测试群与正式群通知，并过滤未付款订阅过期清理
  * [POS]: src 的唯一 Worker 入口，负责站点路由、事件格式化、飞书投递；不修改订单或积分
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -20,6 +20,8 @@ type Env = {
   ZOMBIECOUPLEVID_STRIPE_WEBHOOK_SECRET: string;
   FEISHU_WEBHOOK_URL: string;
   FEISHU_BOT_SECRET: string;
+  FEISHU_TEST_WEBHOOK_URL?: string;
+  FEISHU_TEST_BOT_SECRET?: string;
 };
 
 type SiteConfig = {
@@ -151,7 +153,7 @@ export default {
       }),
     );
     if (message) {
-      await sendFeishu(env, message);
+      await sendFeishu(env, message, event.livemode);
     }
 
     return Response.json({ ok: true, site: site.slug, event: event.type });
@@ -195,7 +197,7 @@ async function handleWaffoWebhook(
       hasMessage: Boolean(message),
     }),
   );
-  if (message) await sendFeishu(env, message);
+  if (message) await sendFeishu(env, message, event.mode === "prod");
   return Response.json({
     ok: true,
     site: "buildvisuals",
@@ -700,16 +702,24 @@ function escapeCardText(value: string): string {
     .replace(/([\\`*_[\]~])/g, "\\$1");
 }
 
-async function sendFeishu(env: Env, notice: Notice): Promise<void> {
+async function sendFeishu(env: Env, notice: Notice, live: boolean): Promise<void> {
+  // ---- 环境隔离：缺失配置直接失败，禁止跨群回退 ----
+  if (typeof live !== "boolean") throw new Error("Missing event environment");
+  const webhookUrl = live ? env.FEISHU_WEBHOOK_URL : env.FEISHU_TEST_WEBHOOK_URL;
+  const botSecret = live ? env.FEISHU_BOT_SECRET : env.FEISHU_TEST_BOT_SECRET;
+  if (!webhookUrl || !botSecret) {
+    throw new Error(`Missing Feishu ${live ? "live" : "test"} configuration`);
+  }
+  const deliveryNotice = live ? notice : { ...notice, title: `🧪 测试 · ${notice.title}` };
   const timestamp = Math.floor(Date.now() / 1000).toString();
   const payload = {
     timestamp,
-    sign: await feishuSign(timestamp, env.FEISHU_BOT_SECRET),
+    sign: await feishuSign(timestamp, botSecret),
     msg_type: "interactive",
-    card: buildFeishuCard(notice),
+    card: buildFeishuCard(deliveryNotice),
   };
 
-  const response = await fetch(env.FEISHU_WEBHOOK_URL, {
+  const response = await fetch(webhookUrl, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload),

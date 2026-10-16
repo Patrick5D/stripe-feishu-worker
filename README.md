@@ -373,3 +373,30 @@ The SDK is pinned to 0.25.0; its default timestamp window is preserved.
 - The product business webhook remains separate and unchanged.
 - Typecheck and all 9 existing regression tests passed. L1/L2/L3 contracts
   remain unchanged: this adds a site mapping to the existing notification boundary.
+
+## Test and Live Notification Isolation
+
+Verified Stripe `livemode=false` events go only to the old 快乐群 test bot.
+Verified `livemode=true` events go only to the new 快乐群 live bot.
+Waffo uses its verified `mode`; production still rejects test-mode signatures.
+Test cards carry an explicit test title. Missing bot credentials fail delivery;
+there is no cross-environment fallback or duplicate send.
+
+- Live bindings remain `FEISHU_WEBHOOK_URL` and `FEISHU_BOT_SECRET`.
+- Test bindings are `FEISHU_TEST_WEBHOOK_URL` and `FEISHU_TEST_BOT_SECRET`.
+- Store all four as Worker secrets, never Wrangler vars or source.
+- Synthetic smokes must set `livemode=false`; never replay a real order to the test bot.
+
+Verified on 2026-10-15:
+
+- Worker version `da735c33-26ec-4af6-8955-ceb753b6d0a9`.
+- Signed smoke `evt_old_group_verified_1792110978` returned 200 and was
+  visually confirmed in the old group with the explicit test title.
+- The initial probe immediately after deployment still used the preceding
+  version and reached the new group. The later probe confirmed the new routing.
+  Deployment completion alone is not evidence that every edge has switched.
+- 10 tests pass, including both destinations, distinct bot signatures,
+  missing credentials without fallback, and rejection of missing event mode.
+- Old bot credentials are stored in login Keychain services
+  `codex stripe feishu test webhook` and `codex stripe feishu test signing secret`.
+- Existing live bot bindings were not changed; no real order was sent to the test group.
