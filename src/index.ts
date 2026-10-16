@@ -17,6 +17,7 @@ type Env = {
   PLAYITOUT_STRIPE_WEBHOOK_SECRET: string;
   MOTIOFY_STRIPE_WEBHOOK_SECRET: string;
   BUILDVISUALS_STRIPE_WEBHOOK_SECRET: string;
+  ZOMBIECOUPLEVID_STRIPE_WEBHOOK_SECRET: string;
   FEISHU_WEBHOOK_URL: string;
   FEISHU_BOT_SECRET: string;
 };
@@ -61,6 +62,11 @@ type NotificationContext = {
 };
 
 const sites: Record<string, SiteDefinition> = {
+  "/zombiecouplevid/stripe/webhook": {
+    slug: "zombiecouplevid",
+    label: "ZombieCoupleVid",
+    stripeWebhookSecretName: "ZOMBIECOUPLEVID_STRIPE_WEBHOOK_SECRET",
+  },
   "/erasio/stripe/webhook": {
     slug: "erasio",
     label: "Erasio",

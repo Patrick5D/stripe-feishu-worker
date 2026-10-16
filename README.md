@@ -10,12 +10,17 @@ POST https://bingo.thecelesteway.com/playitout/stripe/webhook
 POST https://bingo.thecelesteway.com/motiofy/stripe/webhook
 POST https://bingo.thecelesteway.com/buildvisuals/stripe/webhook
 POST https://bingo.thecelesteway.com/buildvisuals/waffo/webhook
+POST https://bingo.thecelesteway.com/zombiecouplevid/stripe/webhook
 GET  https://bingo.thecelesteway.com/health
 ```
 
 Current projects:
 
 ```text
+slug: zombiecouplevid
+label: ZombieCoupleVid
+Stripe webhook secret: ZOMBIECOUPLEVID_STRIPE_WEBHOOK_SECRET
+
 slug: erasio
 label: Erasio
 Stripe webhook secret: ERASIO_STRIPE_WEBHOOK_SECRET
@@ -42,6 +47,7 @@ npx wrangler secret put ERASIO_STRIPE_WEBHOOK_SECRET
 npx wrangler secret put PLAYITOUT_STRIPE_WEBHOOK_SECRET
 npx wrangler secret put MOTIOFY_STRIPE_WEBHOOK_SECRET
 npx wrangler secret put BUILDVISUALS_STRIPE_WEBHOOK_SECRET
+npx wrangler secret put ZOMBIECOUPLEVID_STRIPE_WEBHOOK_SECRET
 npx wrangler secret put FEISHU_WEBHOOK_URL
 npx wrangler secret put FEISHU_BOT_SECRET
 ```
@@ -64,6 +70,9 @@ MOTIOFY_STRIPE_WEBHOOK_SECRET
 BUILDVISUALS_STRIPE_WEBHOOK_SECRET
   Stripe endpoint signing secret for /buildvisuals/stripe/webhook.
   Value format: whsec_xxx.
+
+ZOMBIECOUPLEVID_STRIPE_WEBHOOK_SECRET
+  Live Stripe notification endpoint signing secret for /zombiecouplevid/stripe/webhook.
 
 FEISHU_WEBHOOK_URL
   Feishu custom group bot webhook URL.
@@ -165,6 +174,7 @@ type Env = {
   PLAYITOUT_STRIPE_WEBHOOK_SECRET: string;
   MOTIOFY_STRIPE_WEBHOOK_SECRET: string;
   BUILDVISUALS_STRIPE_WEBHOOK_SECRET: string;
+  ZOMBIECOUPLEVID_STRIPE_WEBHOOK_SECRET: string;
   FEISHU_WEBHOOK_URL: string;
   FEISHU_BOT_SECRET: string;
 };
@@ -343,3 +353,23 @@ The SDK is pinned to 0.25.0; its default timestamp window is preserved.
   Stripe routes 400; removed test route 404.
 - The Feishu bot webhook/signing secrets were reused without reading, copying
   or changing their values. No additional Worker secret or Keychain item was needed.
+
+### ZombieCoupleVid Live Integration (2026-10-15)
+
+- Endpoint: `we_1UQyzGGR8JNLcZcvKWxQ69re`, enabled in live mode.
+- URL: `https://bingo.thecelesteway.com/zombiecouplevid/stripe/webhook`.
+- Events: `checkout.session.completed`, `checkout.session.async_payment_succeeded`,
+  `invoice.payment_succeeded`, `invoice.payment_failed`,
+  `customer.subscription.created`, `customer.subscription.updated`,
+  `customer.subscription.deleted`, `charge.refunded`.
+- Signing secret: Worker `ZOMBIECOUPLEVID_STRIPE_WEBHOOK_SECRET` and login
+  Keychain service `codex zombiecouplevid stripe feishu webhook live`.
+- Active Worker version: `5edc6a8d-c8a6-4eba-9f2a-2e3d54588117`.
+- Health 200; unsigned route 400; signed synthetic checkout 200.
+- Smoke event: `evt_zombiecouplevid_feishu_smoke_1792110455`, test mode,
+  $0.01 display amount; no Stripe charge or product order was created.
+- The synchronous response confirms Feishu business acceptance. The desktop
+  client could not expose the current group card for visual confirmation.
+- The product business webhook remains separate and unchanged.
+- Typecheck and all 9 existing regression tests passed. L1/L2/L3 contracts
+  remain unchanged: this adds a site mapping to the existing notification boundary.
