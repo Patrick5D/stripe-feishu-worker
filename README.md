@@ -106,19 +106,31 @@ failures are red, refunds are orange, and subscription changes are blue.
 Payment card fields:
 
 ```text
-💰 {project label} · 新{月费/年费/积分包/订阅}
-金额
+💰 出单啦！{paid amount} {currency code} · {project label}
 邮箱, falling back to the Stripe customer id
-来源国家, from Checkout/Subscription metadata origin_country
-账单国家, with an ISO country flag
+类型, 积分包/月费/年费/订阅
 注册时间, from low-sensitivity Checkout/Subscription metadata `signup_at`
+出单时间, from the payment-success event timestamp
 首次来源, from `first_touch_source` plus optional `first_touch_medium`
 来源活动, from optional `first_touch_campaign`
-类型
+来源国家, from Checkout/Subscription metadata origin_country
+账单国家, with an ISO country flag
+
+Separate technical block:
+支付渠道
 环境, live or test
-时间, Asia/Shanghai
-Stripe event id
+订单, when supplied by Waffo
+Stripe/Waffo event id
 ```
+
+Amounts appear once in the title with an explicit currency code. The title
+omits the amount when the amount or currency is absent. Payment-success event
+time is shown in Asia/Shanghai as YYYY-MM-DD HH:mm:ss without a timezone suffix;
+it is not notification delivery time or
+an independently queried settlement time. Registration and payment event times
+stay adjacent. Missing registration time does not hide payment event time.
+Waffo additionally shows its product name. Its merchant order id appears in the
+technical block. Payment kind follows the customer identity and precedes the timestamps.
 
 Missing email and country values are omitted instead of displaying `unknown`.
 Missing registration or acquisition metadata is also omitted, preserving

@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 依赖 node:test、node:assert/strict 与 formatEvent 的Stripe/Waffo 事件合同、测试/正式群隔离与临时 RSA 测试密钥
- * [OUTPUT]: 验证 Checkout/Invoice 注册归因、compact metadata、旧事件兼容、非法日期、平台验签、环境隔离与飞书投递失败传播
+ * [OUTPUT]: 验证金额标题、邮箱后类型、北京时间显示、归因兼容、平台验签、环境隔离与飞书投递失败传播
  * [POS]: src 的 Worker 纯行为回归测试，不发送飞书请求、不读取 secret
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -52,7 +52,9 @@ test("checkout renders standard registration and first-touch metadata", () => {
     }),
   );
 
-  assert.equal(fieldValue(notice, "注册时间"), "2026-09-01 08:00:00 GMT+8");
+  assert.deepEqual(notice?.fields.slice(0, 4).map(field => field.label), ["邮箱", "类型", "注册时间", "出单时间"]);
+  assert.equal(fieldValue(notice, "类型"), "积分包");
+  assert.equal(fieldValue(notice, "注册时间"), "2026-09-01 08:00:00");
   assert.equal(fieldValue(notice, "首次来源"), "google / organic");
   assert.equal(fieldValue(notice, "来源活动"), "launch");
 });
@@ -69,9 +71,19 @@ test("checkout accepts compact Build Visuals attribution and omits bad dates", (
 
 test("legacy checkout without attribution remains a valid payment notice", () => {
   const notice = formatEvent(site, checkoutEvent(null));
-  assert.equal(notice?.title, "💰 Motiofy AI · 新积分包");
+  assert.equal(notice?.title, "💰 出单啦！$5.00 USD · Motiofy AI");
   assert.equal(fieldValue(notice, "注册时间"), null);
   assert.equal(fieldValue(notice, "首次来源"), null);
+});
+
+test("payment titles preserve zero-decimal currencies and omit unlabelled amounts", () => {
+  const event = checkoutEvent(null);
+  const session = event.data.object as Stripe.Checkout.Session;
+  session.amount_total = 500;
+  session.currency = "jpy";
+  assert.equal(formatEvent(site, event)?.title, "💰 出单啦！¥500 JPY · Motiofy AI");
+  session.currency = null;
+  assert.equal(formatEvent(site, event)?.title, "💰 出单啦！Motiofy AI");
 });
 
 test("invoice reads current parent subscription metadata snapshot", () => {
@@ -153,12 +165,12 @@ function waffoEvent() {
 
 test("Waffo formats display amounts, ISO dates and attribution without Stripe cent conversion", () => {
   const notice = formatWaffoEvent(waffoEvent());
-  assert.equal(fieldValue(notice, "金额"), "$9.00");
+  assert.equal(notice?.title, "💰 出单啦！$9.00 USD · Build Visuals");
   assert.equal(fieldValue(notice, "支付渠道"), "Waffo");
   assert.equal(fieldValue(notice, "账单国家"), "🇨🇳 CN");
   assert.equal(fieldValue(notice, "来源国家"), "🇺🇸 US");
   assert.equal(fieldValue(notice, "首次来源"), "google");
-  assert.equal(fieldValue(notice, "时间"), "2026-10-09 10:00:00 GMT+8");
+  assert.equal(fieldValue(notice, "出单时间"), "2026-10-09 10:00:00");
 });
 
 test("Waffo skips other event types and does not fabricate missing charged amounts", () => {
@@ -170,7 +182,7 @@ test("Waffo skips other event types and does not fabricate missing charged amoun
   delete event.data.chargedAmount;
   delete event.data.orderMetadata;
   const notice = formatWaffoEvent({ ...event, mode: "test" });
-  assert.equal(fieldValue(notice, "金额"), null);
+  assert.doesNotMatch(notice!.title, /9\.00|USD/);
   assert.equal(fieldValue(notice, "首次来源"), null);
   assert.match(notice!.title, /测试/);
 });
@@ -243,7 +255,10 @@ test("Waffo route verifies raw signatures, environment and store before deliveri
   assert.equal(sent.length, 0);
   assert.equal((await worker.fetch(request(waffoEvent()), env)).status, 200);
   assert.equal(sent.length, 1);
-  assert.match(sent[0].card.body.elements[0].content, /\$9\.00/);
+  assert.match(sent[0].card.header.title.content, /\$9\.00 USD/);
+  assert.match(sent[0].card.body.elements[0].content, /注册时间[^\n]*\n\*\*出单时间/);
+  assert.doesNotMatch(sent[0].card.body.elements[0].content, /PAY_fixture|local1/);
+  assert.match(sent[0].card.body.elements[1].content, /local1[\s\S]*PAY\\_fixture/);
   fetchMock.mock.mockImplementation(async () => Response.json({ code: 19024 }));
   await assert.rejects(
     worker.fetch(request(waffoEvent()), env),

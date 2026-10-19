@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 Stripe 与 Waffo SDK 的 webhook 验签，依赖 Cloudflare Workers 的 fetch/crypto 运行时
  * [OUTPUT]: 对外提供多站点 Stripe 与 Build Visuals Waffo webhook 路由，按验签后的环境分流测试群与正式群通知，并过滤未付款订阅过期清理
- * [POS]: src 的唯一 Worker 入口，负责站点路由、事件格式化、飞书投递；不修改订单或积分
+ * [POS]: src 的唯一 Worker 入口，负责站点路由、金额标题、邮箱后类型、北京时间排版与飞书投递；不修改订单或积分
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import Stripe from "stripe";
@@ -42,7 +42,7 @@ type SiteDefinition = Omit<SiteConfig, "stripeWebhookSecret"> & {
 type Notice = {
   title: string;
   template: "green" | "red" | "orange" | "blue";
-  fields: Array<{ label: string; value?: string | null }>;
+  fields: Array<{ label: string; value?: string | null; secondary?: boolean }>;
 };
 
 type PaymentDetails = {
@@ -214,30 +214,24 @@ export function formatWaffoEvent(
   const metadata = data.orderMetadata ?? null;
   const context = readNotificationContext(metadata);
   const country = data.billingDetail?.country;
+  const amount = formatWaffoAmount(data.chargedAmount, data.currency);
   return {
-    title: `${event.mode === "test" ? "🧪 测试" : "💰"} Build Visuals · 新积分包`,
+    title: `${event.mode === "test" ? "🧪 测试" : "💰"} ${paymentHeadline("Build Visuals", amount, data.currency)}`,
     template: "green",
     fields: [
-      {
-        label: "金额",
-        value: formatWaffoAmount(data.chargedAmount, data.currency),
-      },
       customerField(data.buyerEmail),
-      { label: "支付渠道", value: "Waffo" },
+      { label: "类型", value: "积分包" },
       { label: "商品", value: data.productName },
-      { label: "来源国家", value: formatCountry(metadata?.origin_country) },
-      {
-        label: "账单国家",
-        value: formatCountry(typeof country === "string" ? country : null),
-      },
       { label: "注册时间", value: formatSignupAt(context.signupAt) },
+      { label: "出单时间", value: formatSignupAt(event.timestamp) },
       { label: "首次来源", value: formatFirstTouch(context) },
       { label: "来源活动", value: context.firstTouchCampaign },
-      { label: "订单", value: data.orderMerchantExternalId ?? data.orderId },
-      { label: "类型", value: "积分包" },
-      { label: "环境", value: event.mode === "prod" ? "正式" : "测试" },
-      { label: "时间", value: formatSignupAt(event.timestamp) },
-      { label: "事件", value: event.id },
+      { label: "订单", value: data.orderMerchantExternalId ?? data.orderId, secondary: true },
+      { label: "来源国家", value: formatCountry(metadata?.origin_country) },
+      { label: "账单国家", value: formatCountry(typeof country === "string" ? country : null) },
+      { label: "支付渠道", value: "Waffo", secondary: true },
+      { label: "环境", value: event.mode === "prod" ? "正式" : "测试", secondary: true },
+      { label: "事件", value: event.id, secondary: true },
     ],
   };
 }
@@ -418,32 +412,29 @@ function formatPaymentNotice(
   event: Stripe.Event,
   payment: PaymentDetails,
 ): Notice {
+  const amount = formatDisplayAmount(payment.amount, payment.currency);
   return {
-    title: `💰 ${site.label} · 新${payment.kind}`,
+    title: `💰 ${paymentHeadline(site.label, amount, payment.currency)}`,
     template: "green",
-    fields: eventFields(event, [
-      {
-        label: "金额",
-        value: formatDisplayAmount(payment.amount, payment.currency),
-      },
+    fields: [
       customerField(payment.email, payment.customer),
+      { label: "类型", value: payment.kind },
+      { label: "注册时间", value: formatSignupAt(payment.notificationContext?.signupAt) },
+      { label: "出单时间", value: formatUnix(event.created) },
+      { label: "首次来源", value: formatFirstTouch(payment.notificationContext) },
+      { label: "来源活动", value: payment.notificationContext?.firstTouchCampaign },
       { label: "来源国家", value: formatCountry(payment.originCountry) },
       { label: "账单国家", value: formatCountry(payment.country) },
-      {
-        label: "注册时间",
-        value: formatSignupAt(payment.notificationContext?.signupAt),
-      },
-      {
-        label: "首次来源",
-        value: formatFirstTouch(payment.notificationContext),
-      },
-      {
-        label: "来源活动",
-        value: payment.notificationContext?.firstTouchCampaign,
-      },
-      { label: "类型", value: payment.kind },
-    ]),
+      { label: "支付渠道", value: "Stripe", secondary: true },
+      { label: "环境", value: event.livemode ? "正式" : "测试", secondary: true },
+      { label: "事件", value: event.id, secondary: true },
+    ],
   };
+}
+
+function paymentHeadline(label: string, amount: string | null, currency?: string | null): string {
+  const money = amount && currency ? `${amount} ${currency.toUpperCase()} · ` : "";
+  return `出单啦！${money}${label}`;
 }
 
 function inferCheckoutKind(session: Stripe.Checkout.Session): string {
@@ -641,7 +632,7 @@ function formatCustomer(
 
 function formatUnix(seconds: number): string {
   const shanghaiSeconds = seconds + 8 * 60 * 60;
-  return `${new Date(shanghaiSeconds * 1000).toISOString().slice(0, 19).replace("T", " ")} GMT+8`;
+  return new Date(shanghaiSeconds * 1000).toISOString().slice(0, 19).replace("T", " ");
 }
 
 function formatSignupAt(value?: string): string | null {
@@ -671,12 +662,13 @@ function formatCountry(country: string | null | undefined): string | null {
 }
 
 function buildFeishuCard(notice: Notice) {
-  const content = notice.fields
-    .filter((field): field is { label: string; value: string } =>
-      Boolean(field.value),
-    )
-    .map((field) => `**${field.label}**　${escapeCardText(field.value)}`)
-    .join("\n");
+  const elements = [false, true].flatMap((secondary) => {
+    const content = notice.fields
+      .filter((field) => Boolean(field.value) && Boolean(field.secondary) === secondary)
+      .map((field) => `**${field.label}**　${escapeCardText(field.value!)}`)
+      .join("\n");
+    return content ? [{ tag: "markdown", content }] : [];
+  });
 
   return {
     schema: "2.0",
@@ -689,7 +681,7 @@ function buildFeishuCard(notice: Notice) {
     body: {
       direction: "vertical",
       padding: "12px 12px 12px 12px",
-      elements: [{ tag: "markdown", content }],
+      elements,
     },
   };
 }
