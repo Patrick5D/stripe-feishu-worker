@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 Stripe 与 Waffo SDK 的 webhook 验签，依赖 Cloudflare Workers 的 fetch/crypto 运行时
  * [OUTPUT]: 对外提供多站点 Stripe 与 Build Visuals Waffo webhook 路由，按验签后的环境分流测试群与正式群通知，并过滤未付款订阅过期清理
- * [POS]: src 的唯一 Worker 入口，负责站点路由、金额标题、邮箱后类型、北京时间排版与飞书投递；不修改订单或积分
+ * [POS]: src 的唯一 Worker 入口，负责站点路由、金额标题、国家中文名、北京时间排版与飞书投递；不修改订单或积分
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import Stripe from "stripe";
@@ -658,7 +658,10 @@ function formatCountry(country: string | null | undefined): string | null {
   const flag = [...code]
     .map((letter) => String.fromCodePoint(127397 + letter.charCodeAt(0)))
     .join("");
-  return `${flag} ${code}`;
+  const chineseName = new Intl.DisplayNames(["zh-CN"], { type: "region" }).of(code);
+  return [flag, code, chineseName !== code ? chineseName : null]
+    .filter(Boolean)
+    .join(" ");
 }
 
 function buildFeishuCard(notice: Notice) {

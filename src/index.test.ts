@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 依赖 node:test、node:assert/strict 与 formatEvent 的Stripe/Waffo 事件合同、测试/正式群隔离与临时 RSA 测试密钥
- * [OUTPUT]: 验证金额标题、邮箱后类型、北京时间显示、归因兼容、平台验签、环境隔离与飞书投递失败传播
+ * [OUTPUT]: 验证金额标题、国家中文名、北京时间显示、归因兼容、平台验签、环境隔离与飞书投递失败传播
  * [POS]: src 的 Worker 纯行为回归测试，不发送飞书请求、不读取 secret
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -167,8 +167,8 @@ test("Waffo formats display amounts, ISO dates and attribution without Stripe ce
   const notice = formatWaffoEvent(waffoEvent());
   assert.equal(notice?.title, "💰 出单啦！$9.00 USD · Build Visuals");
   assert.equal(fieldValue(notice, "支付渠道"), "Waffo");
-  assert.equal(fieldValue(notice, "账单国家"), "🇨🇳 CN");
-  assert.equal(fieldValue(notice, "来源国家"), "🇺🇸 US");
+  assert.equal(fieldValue(notice, "账单国家"), "🇨🇳 CN 中国");
+  assert.equal(fieldValue(notice, "来源国家"), "🇺🇸 US 美国");
   assert.equal(fieldValue(notice, "首次来源"), "google");
   assert.equal(fieldValue(notice, "出单时间"), "2026-10-09 10:00:00");
 });

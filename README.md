@@ -113,8 +113,8 @@ Payment card fields:
 出单时间, from the payment-success event timestamp
 首次来源, from `first_touch_source` plus optional `first_touch_medium`
 来源活动, from optional `first_touch_campaign`
-来源国家, from Checkout/Subscription metadata origin_country
-账单国家, with an ISO country flag
+来源国家, with flag, ISO code, and Chinese name
+账单国家, with flag, ISO code, and Chinese name
 
 Separate technical block:
 支付渠道
