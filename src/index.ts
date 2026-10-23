@@ -18,6 +18,7 @@ type Env = {
   MOTIOFY_STRIPE_WEBHOOK_SECRET: string;
   BUILDVISUALS_STRIPE_WEBHOOK_SECRET: string;
   ZOMBIECOUPLEVID_STRIPE_WEBHOOK_SECRET: string;
+  HITTHEROADDUDE_STRIPE_WEBHOOK_SECRET: string;
   FEISHU_WEBHOOK_URL: string;
   FEISHU_BOT_SECRET: string;
   FEISHU_TEST_WEBHOOK_URL?: string;
@@ -64,6 +65,11 @@ type NotificationContext = {
 };
 
 const sites: Record<string, SiteDefinition> = {
+  "/hittheroaddude/stripe/webhook": {
+    slug: "hittheroaddude",
+    label: "HitTheRoadDude",
+    stripeWebhookSecretName: "HITTHEROADDUDE_STRIPE_WEBHOOK_SECRET",
+  },
   "/zombiecouplevid/stripe/webhook": {
     slug: "zombiecouplevid",
     label: "ZombieCoupleVid",

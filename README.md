@@ -11,12 +11,17 @@ POST https://bingo.thecelesteway.com/motiofy/stripe/webhook
 POST https://bingo.thecelesteway.com/buildvisuals/stripe/webhook
 POST https://bingo.thecelesteway.com/buildvisuals/waffo/webhook
 POST https://bingo.thecelesteway.com/zombiecouplevid/stripe/webhook
+POST https://bingo.thecelesteway.com/hittheroaddude/stripe/webhook
 GET  https://bingo.thecelesteway.com/health
 ```
 
 Current projects:
 
 ```text
+slug: hittheroaddude
+label: HitTheRoadDude
+Stripe webhook secret: HITTHEROADDUDE_STRIPE_WEBHOOK_SECRET
+
 slug: zombiecouplevid
 label: ZombieCoupleVid
 Stripe webhook secret: ZOMBIECOUPLEVID_STRIPE_WEBHOOK_SECRET
@@ -48,6 +53,7 @@ npx wrangler secret put PLAYITOUT_STRIPE_WEBHOOK_SECRET
 npx wrangler secret put MOTIOFY_STRIPE_WEBHOOK_SECRET
 npx wrangler secret put BUILDVISUALS_STRIPE_WEBHOOK_SECRET
 npx wrangler secret put ZOMBIECOUPLEVID_STRIPE_WEBHOOK_SECRET
+npx wrangler secret put HITTHEROADDUDE_STRIPE_WEBHOOK_SECRET
 npx wrangler secret put FEISHU_WEBHOOK_URL
 npx wrangler secret put FEISHU_BOT_SECRET
 ```
@@ -73,6 +79,9 @@ BUILDVISUALS_STRIPE_WEBHOOK_SECRET
 
 ZOMBIECOUPLEVID_STRIPE_WEBHOOK_SECRET
   Live Stripe notification endpoint signing secret for /zombiecouplevid/stripe/webhook.
+
+HITTHEROADDUDE_STRIPE_WEBHOOK_SECRET
+  Live Stripe notification endpoint signing secret for /hittheroaddude/stripe/webhook.
 
 FEISHU_WEBHOOK_URL
   Feishu custom group bot webhook URL.
@@ -187,6 +196,7 @@ type Env = {
   MOTIOFY_STRIPE_WEBHOOK_SECRET: string;
   BUILDVISUALS_STRIPE_WEBHOOK_SECRET: string;
   ZOMBIECOUPLEVID_STRIPE_WEBHOOK_SECRET: string;
+  HITTHEROADDUDE_STRIPE_WEBHOOK_SECRET: string;
   FEISHU_WEBHOOK_URL: string;
   FEISHU_BOT_SECRET: string;
 };
@@ -387,6 +397,25 @@ The SDK is pinned to 0.25.0; its default timestamp window is preserved.
   remain unchanged: this adds a site mapping to the existing notification boundary.
 
 ## Test and Live Notification Isolation
+
+### HitTheRoadDude integration (2026-10-23)
+
+- Live endpoint `we_1UTcjgGVN5oonr7yNtMKkCUO` is enabled at
+  `https://bingo.thecelesteway.com/hittheroaddude/stripe/webhook`.
+- It subscribes to the eight supported notification events, independently
+  of the product's order/credit webhook.
+- Signing secret is stored as Worker `HITTHEROADDUDE_STRIPE_WEBHOOK_SECRET`
+  and Keychain service `codex hittheroaddude stripe feishu webhook live`.
+- Active Worker version: `5c300132-e1c5-4774-ad49-46c8955aa72b`.
+- Health returned 200; an unsigned request returned 400.
+- One signed synthetic event `evt_htrd_feishu_test_1792739897` used
+  `livemode=false` and a fictional USD 0.01 display amount. It returned 200.
+- The Feishu desktop client visibly showed the matching test card in
+  **测试通知群**, delivered by the existing test bot. No real payment,
+  product order, or live-group smoke was created.
+- Typecheck and all 11 existing tests passed, including no-fallback routing.
+- Live Stripe events retain the existing live destination; this smoke
+  verifies the test destination, not an actual Stripe charge/delivery.
 
 Verified Stripe `livemode=false` events go only to the old 快乐群 test bot.
 Verified `livemode=true` events go only to the new 快乐群 live bot.
