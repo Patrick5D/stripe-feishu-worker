@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 依赖 node:test、node:assert/strict 与 formatEvent 的Stripe/Waffo 事件合同、测试/正式群隔离与临时 RSA 测试密钥
- * [OUTPUT]: 验证金额标题、国家中文名、北京时间显示、归因兼容、平台验签、环境隔离与飞书投递失败传播
+ * [OUTPUT]: 验证直接收款主单与加购、金额标题、国家中文名、北京时间显示、归因兼容、平台验签、环境隔离与飞书投递失败传播
  * [POS]: src 的 Worker 纯行为回归测试，不发送飞书请求、不读取 secret
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -337,4 +337,52 @@ test("verified Stripe modes use isolated bots without fallback", async (t) => {
   await assert.rejects(worker.fetch(request(true), { ...env, FEISHU_WEBHOOK_URL: undefined }), /Missing Feishu live configuration/);
   await assert.rejects(worker.fetch(request(undefined), env), /Missing event environment/);
   assert.equal(sent.length, 2);
+});
+
+const songSite = { slug: "ourlittlesong", label: "OurLittleSong", stripeWebhookSecret: "fixture" };
+function songEvent(extra = false): Stripe.Event {
+  return {
+    id: "evt_song_fixture", type: "payment_intent.succeeded", created: 1789396485, livemode: false,
+    data: { object: {
+      id: "pi_song_fixture", status: "succeeded", amount: 4900, amount_received: 2900,
+      currency: "usd", customer: "cus_song_fixture", receipt_email: null, latest_charge: "ch_fixture",
+      metadata: { song_id: "song_fixture", order_id: "order_*fixture", ...(extra ? { extra_request_id: "extra_fixture" } : {}) },
+    } },
+  } as unknown as Stripe.Event;
+}
+test("direct song payments use received amount and distinguish extras without inventing context", () => {
+  const notice = formatEvent(songSite, songEvent());
+  assert.equal(notice?.title, "💰 出单啦！$29.00 USD · OurLittleSong");
+  assert.equal(fieldValue(notice, "类型"), "歌曲订单");
+  assert.equal(fieldValue(notice, "客户"), "cus_song_fixture");
+  assert.equal(fieldValue(notice, "订单"), "order_*fixture");
+  assert.equal(fieldValue(notice, "注册时间"), null);
+  assert.equal(fieldValue(notice, "账单国家"), null);
+  assert.equal(fieldValue(formatEvent(songSite, songEvent(true)), "类型"), "歌曲加购");
+  const event = songEvent();
+  (event.data.object as Stripe.PaymentIntent).amount_received = 0;
+  assert.equal(formatEvent(songSite, event), null);
+  assert.equal(formatEvent(site, songEvent()), null);
+  assert.equal(formatEvent(songSite, checkoutEvent(null)), null);
+});
+test("song route verifies signatures, escapes order context and sends only to the test bot", async (t) => {
+  const sent: any[] = [];
+  t.mock.method(globalThis, "fetch", async (url: any, init: any) => {
+    sent.push({ url, body: JSON.parse(init.body) });
+    return Response.json({ code: 0 });
+  });
+  const env = { OURLITTLESONG_STRIPE_WEBHOOK_SECRET: "fixture-song-secret",
+    FEISHU_TEST_WEBHOOK_URL: "https://example.invalid/test", FEISHU_TEST_BOT_SECRET: "fixture-bot" } as any;
+  const body = JSON.stringify(songEvent());
+  const stamp = Math.floor(Date.now() / 1000);
+  const signature = createHmac("sha256", env.OURLITTLESONG_STRIPE_WEBHOOK_SECRET).update(`${stamp}.${body}`).digest("hex");
+  const url = "https://example.invalid/ourlittlesong/stripe/webhook";
+  assert.equal((await worker.fetch(new Request(url, { method: "POST" }), env)).status, 400);
+  const response = await worker.fetch(new Request(url, { method: "POST", body,
+    headers: { "stripe-signature": `t=${stamp},v1=${signature}` } }), env);
+  assert.equal(response.status, 200);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].url, env.FEISHU_TEST_WEBHOOK_URL);
+  assert.match(sent[0].body.card.header.title.content, /🧪 测试/);
+  assert.ok(sent[0].body.card.body.elements[1].content.includes("order\\_\\*fixture"));
 });

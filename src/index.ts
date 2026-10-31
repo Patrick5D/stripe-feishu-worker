@@ -1,6 +1,6 @@
 /**
- * [INPUT]: 依赖 Stripe 与 Waffo SDK 的 webhook 验签，依赖 Cloudflare Workers 的 fetch/crypto 运行时
- * [OUTPUT]: 对外提供多站点 Stripe 与 Build Visuals Waffo webhook 路由，按验签后的环境分流测试群与正式群通知，并过滤未付款订阅过期清理
+ * [INPUT]: 依赖 Stripe 与 Waffo SDK 的 webhook 验签，依赖 Cloudflare Workers 的 fetch/crypto 运行时与 sites 的路由绑定
+ * [OUTPUT]: 对外提供多站点 Stripe 与 Build Visuals Waffo webhook 路由，按验签后的环境分流测试群与正式群通知，兼容 OurLittleSong 直接收款，并过滤未付款订阅过期清理
  * [POS]: src 的唯一 Worker 入口，负责站点路由、金额标题、国家中文名、北京时间排版与飞书投递；不修改订单或积分
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -11,34 +11,7 @@ import {
   type WebhookEventData,
 } from "@waffo/pancake-ts";
 
-type Env = {
-  WAFFO_ENVIRONMENT?: "test" | "prod";
-  ERASIO_STRIPE_WEBHOOK_SECRET: string;
-  PLAYITOUT_STRIPE_WEBHOOK_SECRET: string;
-  MOTIOFY_STRIPE_WEBHOOK_SECRET: string;
-  BUILDVISUALS_STRIPE_WEBHOOK_SECRET: string;
-  ZOMBIECOUPLEVID_STRIPE_WEBHOOK_SECRET: string;
-  HITTHEROADDUDE_STRIPE_WEBHOOK_SECRET: string;
-  FEISHU_WEBHOOK_URL: string;
-  FEISHU_BOT_SECRET: string;
-  FEISHU_TEST_WEBHOOK_URL?: string;
-  FEISHU_TEST_BOT_SECRET?: string;
-};
-
-type SiteConfig = {
-  slug: string;
-  label: string;
-  stripeWebhookSecret: string;
-};
-
-type StripeWebhookSecretName = Extract<
-  keyof Env,
-  `${string}_STRIPE_WEBHOOK_SECRET`
->;
-
-type SiteDefinition = Omit<SiteConfig, "stripeWebhookSecret"> & {
-  stripeWebhookSecretName: StripeWebhookSecretName;
-};
+import { sites, type Env, type SiteConfig } from "./sites.ts";
 
 type Notice = {
   title: string;
@@ -55,6 +28,9 @@ type PaymentDetails = {
   originCountry?: string | null;
   country?: string | null;
   notificationContext?: NotificationContext;
+  orderId?: string;
+  paymentIntentId?: string;
+  extraRequestId?: string;
 };
 
 type NotificationContext = {
@@ -64,38 +40,6 @@ type NotificationContext = {
   firstTouchCampaign?: string;
 };
 
-const sites: Record<string, SiteDefinition> = {
-  "/hittheroaddude/stripe/webhook": {
-    slug: "hittheroaddude",
-    label: "HitTheRoadDude",
-    stripeWebhookSecretName: "HITTHEROADDUDE_STRIPE_WEBHOOK_SECRET",
-  },
-  "/zombiecouplevid/stripe/webhook": {
-    slug: "zombiecouplevid",
-    label: "ZombieCoupleVid",
-    stripeWebhookSecretName: "ZOMBIECOUPLEVID_STRIPE_WEBHOOK_SECRET",
-  },
-  "/erasio/stripe/webhook": {
-    slug: "erasio",
-    label: "Erasio",
-    stripeWebhookSecretName: "ERASIO_STRIPE_WEBHOOK_SECRET",
-  },
-  "/playitout/stripe/webhook": {
-    slug: "playitout",
-    label: "PlayItOut",
-    stripeWebhookSecretName: "PLAYITOUT_STRIPE_WEBHOOK_SECRET",
-  },
-  "/motiofy/stripe/webhook": {
-    slug: "motiofy",
-    label: "Motiofy AI",
-    stripeWebhookSecretName: "MOTIOFY_STRIPE_WEBHOOK_SECRET",
-  },
-  "/buildvisuals/stripe/webhook": {
-    slug: "buildvisuals",
-    label: "Build Visuals",
-    stripeWebhookSecretName: "BUILDVISUALS_STRIPE_WEBHOOK_SECRET",
-  },
-};
 
 const stripe = new Stripe("unused", {
   httpClient: Stripe.createFetchHttpClient(),
@@ -272,7 +216,12 @@ export function formatEvent(
   site: SiteConfig,
   event: Stripe.Event,
 ): Notice | null {
+  // ---- 直接收款站只使用 PaymentIntent 成功事件，避免重复出单 ----
+  if (site.slug === "ourlittlesong" &&
+      (event.type.startsWith("checkout.session.") || event.type.startsWith("invoice."))) return null;
   switch (event.type) {
+    case "payment_intent.succeeded":
+      return site.slug === "ourlittlesong" ? formatPaymentIntentSucceeded(site, event) : null;
     case "checkout.session.completed":
     case "checkout.session.async_payment_succeeded":
       return formatCheckoutCompleted(site, event);
@@ -289,6 +238,25 @@ export function formatEvent(
     default:
       return null;
   }
+}
+
+function formatPaymentIntentSucceeded(site: SiteConfig, event: Stripe.Event): Notice | null {
+  const intent = event.data.object as Stripe.PaymentIntent;
+  if (intent.status !== "succeeded" || intent.amount_received <= 0) return null;
+  const charge = typeof intent.latest_charge === "object" ? intent.latest_charge : null;
+  return formatPaymentNotice(site, event, {
+    kind: intent.metadata.extra_request_id ? "歌曲加购" : "歌曲订单",
+    amount: intent.amount_received,
+    currency: intent.currency,
+    email: intent.receipt_email ?? charge?.billing_details?.email,
+    customer: formatCustomer(intent.customer),
+    originCountry: readMetadataCountry(intent.metadata),
+    country: charge?.billing_details?.address?.country,
+    notificationContext: readNotificationContext(intent.metadata),
+    orderId: intent.metadata.order_id,
+    paymentIntentId: intent.id,
+    extraRequestId: intent.metadata.extra_request_id,
+  });
 }
 
 function formatCheckoutCompleted(
@@ -431,6 +399,9 @@ function formatPaymentNotice(
       { label: "来源活动", value: payment.notificationContext?.firstTouchCampaign },
       { label: "来源国家", value: formatCountry(payment.originCountry) },
       { label: "账单国家", value: formatCountry(payment.country) },
+      { label: "订单", value: payment.orderId, secondary: true },
+      { label: "付款", value: payment.paymentIntentId, secondary: true },
+      { label: "加购请求", value: payment.extraRequestId, secondary: true },
       { label: "支付渠道", value: "Stripe", secondary: true },
       { label: "环境", value: event.livemode ? "正式" : "测试", secondary: true },
       { label: "事件", value: event.id, secondary: true },

@@ -12,12 +12,17 @@ POST https://bingo.thecelesteway.com/buildvisuals/stripe/webhook
 POST https://bingo.thecelesteway.com/buildvisuals/waffo/webhook
 POST https://bingo.thecelesteway.com/zombiecouplevid/stripe/webhook
 POST https://bingo.thecelesteway.com/hittheroaddude/stripe/webhook
+POST https://bingo.thecelesteway.com/ourlittlesong/stripe/webhook
 GET  https://bingo.thecelesteway.com/health
 ```
 
 Current projects:
 
 ```text
+slug: ourlittlesong
+label: OurLittleSong
+Stripe webhook secret: OURLITTLESONG_STRIPE_WEBHOOK_SECRET
+
 slug: hittheroaddude
 label: HitTheRoadDude
 Stripe webhook secret: HITTHEROADDUDE_STRIPE_WEBHOOK_SECRET
@@ -48,6 +53,7 @@ Stripe webhook secret: BUILDVISUALS_STRIPE_WEBHOOK_SECRET
 Configure secrets with Wrangler. Do not commit real values.
 
 ```bash
+npx wrangler secret put OURLITTLESONG_STRIPE_WEBHOOK_SECRET
 npx wrangler secret put ERASIO_STRIPE_WEBHOOK_SECRET
 npx wrangler secret put PLAYITOUT_STRIPE_WEBHOOK_SECRET
 npx wrangler secret put MOTIOFY_STRIPE_WEBHOOK_SECRET
@@ -61,6 +67,10 @@ npx wrangler secret put FEISHU_BOT_SECRET
 Secret meaning:
 
 ```text
+OURLITTLESONG_STRIPE_WEBHOOK_SECRET
+  Live notification signing secret for /ourlittlesong/stripe/webhook.
+  Separate from the product business webhook secret.
+
 ERASIO_STRIPE_WEBHOOK_SECRET
   Stripe endpoint signing secret for /erasio/stripe/webhook.
   Value format: whsec_xxx.
@@ -187,7 +197,7 @@ Stripe endpoint signing secret
 
 ### 1. Add The Env Binding Type
 
-Edit `src/index.ts`:
+Edit `src/sites.ts`:
 
 ```ts
 type Env = {
@@ -197,6 +207,7 @@ type Env = {
   BUILDVISUALS_STRIPE_WEBHOOK_SECRET: string;
   ZOMBIECOUPLEVID_STRIPE_WEBHOOK_SECRET: string;
   HITTHEROADDUDE_STRIPE_WEBHOOK_SECRET: string;
+  OURLITTLESONG_STRIPE_WEBHOOK_SECRET: string;
   FEISHU_WEBHOOK_URL: string;
   FEISHU_BOT_SECRET: string;
 };
@@ -204,7 +215,7 @@ type Env = {
 
 ### 2. Add The Route Mapping
 
-Add an entry in the site route table:
+Add an entry in the `src/sites.ts` route table:
 
 ```ts
 const sites: Record<string, SiteDefinition> = {
@@ -441,3 +452,37 @@ Verified on 2026-10-15:
 - Old bot credentials are stored in login Keychain services
   `codex stripe feishu test webhook` and `codex stripe feishu test signing secret`.
 - Existing live bot bindings were not changed; no real order was sent to the test group.
+
+## OurLittleSong direct payments
+
+OurLittleSong subscribes only to `payment_intent.succeeded` for payment notices.
+Its route ignores Checkout and Invoice events to avoid duplicate success cards.
+Other sites retain Checkout/Invoice semantics and ignore PaymentIntent successes.
+The actual paid amount comes from `amount_received`, not the requested `amount`.
+`metadata.extra_request_id` identifies a separate extras payment; otherwise the
+card shows a song order. `order_id`, PaymentIntent ID and extras request ID are
+shown in the technical block. Receipt/billing email is used only if present;
+otherwise the customer ID is shown. No product database or Stripe lookup is added.
+Missing registration, country and attribution fields remain omitted.
+
+The product webhook remains `https://ourlittlesong.com/api/songs/stripe-webhook`.
+The notification secret is stored separately as Worker
+`OURLITTLESONG_STRIPE_WEBHOOK_SECRET` and Keychain service
+`codex ourlittlesong stripe feishu webhook live`.
+A synthetic `payment_intent.succeeded` smoke uses `livemode: false`,
+`status: succeeded` and `amount_received: 1`; it creates no Stripe payment.
+
+### Verified OurLittleSong integration (2026-10-31)
+
+- Live endpoint `we_1UWYmdKHt482ldtvrP64ICAV` is enabled for
+  `payment_intent.succeeded` at the OurLittleSong notification route above.
+- Business endpoint `we_1UWYWwKHt482ldtvip56cHI7` remains enabled and unchanged.
+- Code version: `6730d62c-23b0-4f04-9f2d-e9a27ea123af`.
+- Active version after secret binding: `2f34795f-1c40-45de-a576-f562afbed552`.
+- Health returned 200; unsigned notification POST returned 400.
+- Signed synthetic event `evt_ourlittlesong_feishu_smoke_1793439691` returned 200.
+  It used test mode and USD 0.01, without creating a Stripe payment or product order.
+- The Feishu desktop test group visibly showed the matching card and event ID.
+  This verifies the deployed notification path and Feishu business acceptance;
+  a real Stripe payment and Stripe-originated delivery remain untested.
+- Typecheck and 13 regression tests passed. The product repository was not edited.

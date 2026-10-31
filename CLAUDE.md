@@ -2,7 +2,7 @@
 TypeScript + Cloudflare Workers + Stripe SDK + Waffo Pancake SDK
 
 <directory>
-src/ - Worker 入口、业务逻辑与纯行为回归测试 (3文件: index.ts, index.test.ts, CLAUDE.md)
+src/ - Worker 入口、业务逻辑与纯行为回归测试 (4文件: index.ts, sites.ts, index.test.ts, CLAUDE.md)
 </directory>
 
 <config>
