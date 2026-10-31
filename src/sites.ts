@@ -71,4 +71,3 @@ export const sites: Record<string, SiteDefinition> = {
     stripeWebhookSecretName: "BUILDVISUALS_STRIPE_WEBHOOK_SECRET",
   },
 };
-
