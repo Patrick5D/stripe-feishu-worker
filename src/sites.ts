@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 各站独立 Stripe 签名密钥、飞书环境绑定及付款卡片配置类型。
  * [OUTPUT]: Env、SiteConfig 类型及通知路由表。
- * [POS]: Worker 的站点边界；各路由只绑定本站签名密钥。
+ * [POS]: Worker 的站点边界；各路由只绑定本站签名密钥；本站可临时转测试群。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import type { PaymentCardConfig } from "./cards.ts";
@@ -26,6 +26,7 @@ export type SiteConfig = {
   label: string;
   stripeWebhookSecret: string;
   paymentCard?: PaymentCardConfig;
+  forceTestNotifications?: boolean;
 };
 
 type StripeWebhookSecretName = Extract<
@@ -41,6 +42,8 @@ export const sites: Record<string, SiteDefinition> = {
   "/ourlittlesong/stripe/webhook": {
     slug: "ourlittlesong",
     label: "OurLittleSong",
+    // ---- 线上验收期间转发测试群；验收后删除此项 ----
+    forceTestNotifications: true,
     stripeWebhookSecretName: "OURLITTLESONG_STRIPE_WEBHOOK_SECRET",
   },
   "/hittheroaddude/stripe/webhook": {

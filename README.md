@@ -516,3 +516,13 @@ Empty values are omitted, and test notifications always retain their test prefix
 No existing site opts into an override in this change. Configuration is code:
 run tests/typecheck and deploy the Worker after changing it. No webhook or secret
 rotation is needed, and no visible notification is sent by local tests.
+
+## Temporary OurLittleSong acceptance routing
+
+OurLittleSong currently sets `forceTestNotifications: true` in `src/sites.ts`.
+All its supported notifications, including live payments, use the existing test
+bot. Live payment cards retain `环境: 正式` and the title prefix
+`🧪 测试群 · 真实付款`; no Stripe event mode or payment state is changed.
+Other sites retain normal live/test routing. Missing test credentials fail
+without falling back to the live group. Remove this site option and deploy to
+restore normal routing after acceptance; there is no automatic expiration.

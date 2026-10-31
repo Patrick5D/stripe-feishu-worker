@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 依赖 node:test、node:assert/strict 与 formatEvent 的Stripe/Waffo 事件合同、测试/正式群隔离与临时 RSA 测试密钥
- * [OUTPUT]: 验证可选卡片覆盖、默认样式兼容、直接收款主单与加购、金额标题、国家中文名、北京时间显示、归因兼容、平台验签、环境隔离与飞书投递失败传播
+ * [OUTPUT]: 验证真实付款临时转测试群、可选卡片覆盖、默认样式兼容、直接收款主单与加购、金额标题、国家中文名、北京时间显示、归因兼容、平台验签、环境隔离与飞书投递失败传播
  * [POS]: src 的 Worker 纯行为回归测试，不发送飞书请求、不读取 secret
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -438,4 +438,30 @@ test("route applies site card configuration and preserves test marking and escap
   assert.match(card.body.elements[1].content, /^\*\*事件\*\*/);
   assert.ok(card.body.elements[1].content.includes("order\\_\\*fixture"));
   assert.ok(card.body.elements[1].content.includes("订单\\*引用"));
+});
+
+
+test("OurLittleSong live acceptance goes only to test bot while preserving real payment mode", async (t) => {
+  const sent: any[] = [];
+  t.mock.method(globalThis, "fetch", async (url: any, init: any) => {
+    sent.push({ url, payload: JSON.parse(init.body) });
+    return Response.json({ code: 0 });
+  });
+  const env = { OURLITTLESONG_STRIPE_WEBHOOK_SECRET: "fixture-live-routing",
+    FEISHU_WEBHOOK_URL: "https://example.invalid/live", FEISHU_BOT_SECRET: "fixture-live",
+    FEISHU_TEST_WEBHOOK_URL: "https://example.invalid/test", FEISHU_TEST_BOT_SECRET: "fixture-test" } as any;
+  const request = () => {
+    const body = JSON.stringify({ ...songEvent(), livemode: true });
+    const stamp = Math.floor(Date.now() / 1000);
+    const sig = createHmac("sha256", env.OURLITTLESONG_STRIPE_WEBHOOK_SECRET).update(`${stamp}.${body}`).digest("hex");
+    return new Request("https://example.invalid/ourlittlesong/stripe/webhook", { method: "POST", body,
+      headers: { "stripe-signature": `t=${stamp},v1=${sig}` } });
+  };
+  assert.equal((await worker.fetch(request(), env)).status, 200);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].url, env.FEISHU_TEST_WEBHOOK_URL);
+  assert.match(sent[0].payload.card.header.title.content, /测试群 · 真实付款/);
+  assert.match(sent[0].payload.card.body.elements[1].content, /环境\*\*　正式/);
+  await assert.rejects(worker.fetch(request(), { ...env, FEISHU_TEST_WEBHOOK_URL: undefined }), /Missing Feishu test configuration/);
+  assert.equal(sent.length, 1);
 });

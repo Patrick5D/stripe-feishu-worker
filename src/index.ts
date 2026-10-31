@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 依赖 Stripe 与 Waffo SDK 的 webhook 验签，依赖 Cloudflare Workers 的 fetch/crypto 运行时、sites 路由绑定与 cards 展示配置
- * [OUTPUT]: 对外提供多站点 Stripe 与 Build Visuals Waffo webhook 路由，按验签后的环境分流测试群与正式群通知，兼容 OurLittleSong 直接收款，并过滤未付款订阅过期清理
+ * [OUTPUT]: 对外提供多站点 Stripe 与 Build Visuals Waffo webhook 路由，按验签后的环境分流测试群与正式群通知，支持站点临时转测试群，兼容 OurLittleSong 直接收款，并过滤未付款订阅过期清理
  * [POS]: src 的唯一 Worker 入口，负责站点路由、金额标题、国家中文名、北京时间排版与飞书投递；不修改订单或积分
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -99,7 +99,7 @@ export default {
       }),
     );
     if (message) {
-      await sendFeishu(env, message, event.livemode);
+      await sendFeishu(env, message, event.livemode, site.forceTestNotifications);
     }
 
     return Response.json({ ok: true, site: site.slug, event: event.type });
@@ -207,6 +207,7 @@ function getSite(pathname: string, env: Env): SiteConfig | null {
     label: site.label,
     stripeWebhookSecret: env[site.stripeWebhookSecretName],
     paymentCard: site.paymentCard,
+    forceTestNotifications: site.forceTestNotifications,
   };
 }
 
@@ -672,15 +673,18 @@ function escapeCardText(value: string): string {
     .replace(/([\\`*_[\]~])/g, "\\$1");
 }
 
-async function sendFeishu(env: Env, notice: Notice, live: boolean): Promise<void> {
+async function sendFeishu(env: Env, notice: Notice, live: boolean, forceTest = false): Promise<void> {
   // ---- 环境隔离：缺失配置直接失败，禁止跨群回退 ----
   if (typeof live !== "boolean") throw new Error("Missing event environment");
-  const webhookUrl = live ? env.FEISHU_WEBHOOK_URL : env.FEISHU_TEST_WEBHOOK_URL;
-  const botSecret = live ? env.FEISHU_BOT_SECRET : env.FEISHU_TEST_BOT_SECRET;
+  const useLiveBot = live && !forceTest;
+  const webhookUrl = useLiveBot ? env.FEISHU_WEBHOOK_URL : env.FEISHU_TEST_WEBHOOK_URL;
+  const botSecret = useLiveBot ? env.FEISHU_BOT_SECRET : env.FEISHU_TEST_BOT_SECRET;
   if (!webhookUrl || !botSecret) {
-    throw new Error(`Missing Feishu ${live ? "live" : "test"} configuration`);
+    throw new Error(`Missing Feishu ${useLiveBot ? "live" : "test"} configuration`);
   }
-  const deliveryNotice = live ? notice : { ...notice, title: `🧪 测试 · ${notice.title}` };
+  const deliveryNotice = !live
+    ? { ...notice, title: `🧪 测试 · ${notice.title}` }
+    : forceTest ? { ...notice, title: `🧪 测试群 · 真实付款 · ${notice.title}` } : notice;
   const timestamp = Math.floor(Date.now() / 1000).toString();
   const payload = {
     timestamp,
