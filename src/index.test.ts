@@ -441,7 +441,7 @@ test("route applies site card configuration and preserves test marking and escap
 });
 
 
-test("OurLittleSong live acceptance goes only to test bot while preserving real payment mode", async (t) => {
+test("OurLittleSong defaults to live bot and supports an explicit temporary test override", async (t) => {
   const sent: any[] = [];
   t.mock.method(globalThis, "fetch", async (url: any, init: any) => {
     sent.push({ url, payload: JSON.parse(init.body) });
@@ -457,6 +457,15 @@ test("OurLittleSong live acceptance goes only to test bot while preserving real 
     return new Request("https://example.invalid/ourlittlesong/stripe/webhook", { method: "POST", body,
       headers: { "stripe-signature": `t=${stamp},v1=${sig}` } });
   };
+  const { sites } = await import("./sites.ts");
+  const definition = sites["/ourlittlesong/stripe/webhook"];
+  assert.equal(definition.forceTestNotifications, undefined);
+  assert.equal((await worker.fetch(request(), env)).status, 200);
+  assert.equal(sent[0].url, env.FEISHU_WEBHOOK_URL);
+  assert.doesNotMatch(sent[0].payload.card.header.title.content, /测试/);
+  sent.length = 0;
+  t.after(() => { delete definition.forceTestNotifications; });
+  definition.forceTestNotifications = true;
   assert.equal((await worker.fetch(request(), env)).status, 200);
   assert.equal(sent.length, 1);
   assert.equal(sent[0].url, env.FEISHU_TEST_WEBHOOK_URL);

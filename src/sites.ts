@@ -42,8 +42,6 @@ export const sites: Record<string, SiteDefinition> = {
   "/ourlittlesong/stripe/webhook": {
     slug: "ourlittlesong",
     label: "OurLittleSong",
-    // ---- 线上验收期间转发测试群；验收后删除此项 ----
-    forceTestNotifications: true,
     stripeWebhookSecretName: "OURLITTLESONG_STRIPE_WEBHOOK_SECRET",
   },
   "/hittheroaddude/stripe/webhook": {
