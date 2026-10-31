@@ -486,3 +486,33 @@ A synthetic `payment_intent.succeeded` smoke uses `livemode: false`,
   This verifies the deployed notification path and Feishu business acceptance;
   a real Stripe payment and Stripe-originated delivery remain untested.
 - Typecheck and 13 regression tests passed. The product repository was not edited.
+
+## Optional site payment cards
+
+Add `paymentCard` to a route in `src/sites.ts`. Omit it to retain the default.
+Configuration applies to successful Checkout, Invoice and PaymentIntent cards.
+Build Visuals Waffo reads the same site's payment card configuration.
+Refund, failure and subscription-change cards retain their existing presentation.
+
+```ts
+paymentCard: {
+  headline: "歌曲到账！", // Replaces 出单啦！; paid amount/currency/site remain.
+  color: "green", // green | red | orange | blue
+  fieldOrder: ["customer", "kind", "paidAt"],
+  hiddenFields: ["source", "campaign"],
+  labels: { kind: "订单类型", paidAt: "付款时间" },
+},
+```
+
+Stable field IDs: `customer`, `kind`, `product`, `signupAt`, `paidAt`, `source`,
+`campaign`, `originCountry`, `billingCountry`, `order`, `paymentIntent`,
+`extraRequest`, `channel`, `environment`, `event`.
+`customer` represents email or its customer-ID fallback. Only existing event
+fields are available: configuration cannot add missing product/customer facts.
+Fields in `fieldOrder` come first; unlisted fields retain their original order.
+`hiddenFields` omits specified fields. `labels` renames display labels only.
+The renderer preserves the body/technical-block separation and text escaping.
+Empty values are omitted, and test notifications always retain their test prefix.
+No existing site opts into an override in this change. Configuration is code:
+run tests/typecheck and deploy the Worker after changing it. No webhook or secret
+rotation is needed, and no visible notification is sent by local tests.

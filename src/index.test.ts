@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 依赖 node:test、node:assert/strict 与 formatEvent 的Stripe/Waffo 事件合同、测试/正式群隔离与临时 RSA 测试密钥
- * [OUTPUT]: 验证直接收款主单与加购、金额标题、国家中文名、北京时间显示、归因兼容、平台验签、环境隔离与飞书投递失败传播
+ * [OUTPUT]: 验证可选卡片覆盖、默认样式兼容、直接收款主单与加购、金额标题、国家中文名、北京时间显示、归因兼容、平台验签、环境隔离与飞书投递失败传播
  * [POS]: src 的 Worker 纯行为回归测试，不发送飞书请求、不读取 secret
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -385,4 +385,57 @@ test("song route verifies signatures, escapes order context and sends only to th
   assert.equal(sent[0].url, env.FEISHU_TEST_WEBHOOK_URL);
   assert.match(sent[0].body.card.header.title.content, /🧪 测试/);
   assert.ok(sent[0].body.card.body.elements[1].content.includes("order\\_\\*fixture"));
+});
+
+test("site payment cards customize presentation while preserving event facts and other sites", () => {
+  const baseline = formatEvent(songSite, songEvent());
+  const configured = { ...songSite, paymentCard: {
+    headline: "歌曲到账！", color: "blue" as const,
+    fieldOrder: ["paidAt", "customer"] as const,
+    hiddenFields: ["source", "campaign"] as const,
+    labels: { customer: "购买者", kind: "订单类型" },
+  } };
+  const notice = formatEvent(configured, songEvent());
+  assert.equal(notice?.title, "💰 歌曲到账！$29.00 USD · OurLittleSong");
+  assert.equal(notice?.template, "blue");
+  assert.deepEqual(notice?.fields.slice(0, 2).map(f => f.id), ["paidAt", "customer"]);
+  assert.equal(fieldValue(notice, "购买者"), "cus_song_fixture");
+  assert.equal(fieldValue(notice, "订单类型"), "歌曲订单");
+  assert.equal(notice?.fields.some(f => f.id === "source"), false);
+  assert.equal(notice?.fields.find(f => f.id === "event")?.secondary, true);
+  assert.deepEqual(formatEvent(songSite, songEvent()), baseline);
+  assert.equal(formatEvent({ ...site, paymentCard: {} }, checkoutEvent(null))?.title,
+    formatEvent(site, checkoutEvent(null))?.title);
+  const waffo = formatWaffoEvent(waffoEvent(), configured.paymentCard);
+  assert.equal(waffo?.title, "💰 歌曲到账！$9.00 USD · Build Visuals");
+  assert.equal(waffo?.template, "blue");
+});
+
+test("route applies site card configuration and preserves test marking and escaping", async (t) => {
+  const { sites } = await import("./sites.ts");
+  const definition = sites["/ourlittlesong/stripe/webhook"];
+  const previous = definition.paymentCard;
+  t.after(() => { definition.paymentCard = previous; });
+  definition.paymentCard = { headline: "定制到账！", labels: { order: "订单*引用" },
+    fieldOrder: ["event", "kind"] };
+  let card: any;
+  t.mock.method(globalThis, "fetch", async (_url: any, init: any) => {
+    card = JSON.parse(init.body).card;
+    return Response.json({ code: 0 });
+  });
+  const body = JSON.stringify(songEvent());
+  const stamp = Math.floor(Date.now() / 1000);
+  const secret = "fixture-card-secret";
+  const sig = createHmac("sha256", secret).update(`${stamp}.${body}`).digest("hex");
+  const response = await worker.fetch(new Request("https://example.invalid/ourlittlesong/stripe/webhook", {
+    method: "POST", body, headers: { "stripe-signature": `t=${stamp},v1=${sig}` },
+  }), { OURLITTLESONG_STRIPE_WEBHOOK_SECRET: secret,
+    FEISHU_TEST_WEBHOOK_URL: "https://example.invalid/test", FEISHU_TEST_BOT_SECRET: "fixture" } as any);
+  assert.equal(response.status, 200);
+  assert.match(card.header.title.content, /🧪 测试.*定制到账！.*\$0?29\.00 USD/);
+  assert.match(card.body.elements[0].content, /^\*\*类型\*\*/);
+  assert.doesNotMatch(card.body.elements[0].content, /evt/);
+  assert.match(card.body.elements[1].content, /^\*\*事件\*\*/);
+  assert.ok(card.body.elements[1].content.includes("order\\_\\*fixture"));
+  assert.ok(card.body.elements[1].content.includes("订单\\*引用"));
 });

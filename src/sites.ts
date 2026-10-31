@@ -1,9 +1,11 @@
 /**
- * [INPUT]: 各站独立 Stripe 签名密钥与飞书环境绑定。
+ * [INPUT]: 各站独立 Stripe 签名密钥、飞书环境绑定及付款卡片配置类型。
  * [OUTPUT]: Env、SiteConfig 类型及通知路由表。
  * [POS]: Worker 的站点边界；各路由只绑定本站签名密钥。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
+import type { PaymentCardConfig } from "./cards.ts";
+
 export type Env = {
   WAFFO_ENVIRONMENT?: "test" | "prod";
   ERASIO_STRIPE_WEBHOOK_SECRET: string;
@@ -23,6 +25,7 @@ export type SiteConfig = {
   slug: string;
   label: string;
   stripeWebhookSecret: string;
+  paymentCard?: PaymentCardConfig;
 };
 
 type StripeWebhookSecretName = Extract<
