@@ -12,6 +12,7 @@ POST https://bingo.thecelesteway.com/buildvisuals/stripe/webhook
 POST https://bingo.thecelesteway.com/buildvisuals/waffo/webhook
 POST https://bingo.thecelesteway.com/zombiecouplevid/stripe/webhook
 POST https://bingo.thecelesteway.com/hittheroaddude/stripe/webhook
+POST https://bingo.thecelesteway.com/rappermaker/stripe/webhook
 POST https://bingo.thecelesteway.com/ourlittlesong/stripe/webhook
 GET  https://bingo.thecelesteway.com/health
 ```
@@ -19,6 +20,10 @@ GET  https://bingo.thecelesteway.com/health
 Current projects:
 
 ```text
+slug: rappermaker
+label: RapperMaker
+Stripe webhook secret: RAPPERMAKER_STRIPE_WEBHOOK_SECRET
+
 slug: ourlittlesong
 label: OurLittleSong
 Stripe webhook secret: OURLITTLESONG_STRIPE_WEBHOOK_SECRET
@@ -53,6 +58,7 @@ Stripe webhook secret: BUILDVISUALS_STRIPE_WEBHOOK_SECRET
 Configure secrets with Wrangler. Do not commit real values.
 
 ```bash
+npx wrangler secret put RAPPERMAKER_STRIPE_WEBHOOK_SECRET
 npx wrangler secret put OURLITTLESONG_STRIPE_WEBHOOK_SECRET
 npx wrangler secret put ERASIO_STRIPE_WEBHOOK_SECRET
 npx wrangler secret put PLAYITOUT_STRIPE_WEBHOOK_SECRET
@@ -67,6 +73,9 @@ npx wrangler secret put FEISHU_BOT_SECRET
 Secret meaning:
 
 ```text
+RAPPERMAKER_STRIPE_WEBHOOK_SECRET
+  Live notification signing secret for /rappermaker/stripe/webhook.
+  Separate from the product business webhook secret.
 OURLITTLESONG_STRIPE_WEBHOOK_SECRET
   Live notification signing secret for /ourlittlesong/stripe/webhook.
   Separate from the product business webhook secret.
@@ -207,6 +216,7 @@ type Env = {
   BUILDVISUALS_STRIPE_WEBHOOK_SECRET: string;
   ZOMBIECOUPLEVID_STRIPE_WEBHOOK_SECRET: string;
   HITTHEROADDUDE_STRIPE_WEBHOOK_SECRET: string;
+  RAPPERMAKER_STRIPE_WEBHOOK_SECRET: string;
   OURLITTLESONG_STRIPE_WEBHOOK_SECRET: string;
   FEISHU_WEBHOOK_URL: string;
   FEISHU_BOT_SECRET: string;

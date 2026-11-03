@@ -14,6 +14,7 @@ export type Env = {
   BUILDVISUALS_STRIPE_WEBHOOK_SECRET: string;
   ZOMBIECOUPLEVID_STRIPE_WEBHOOK_SECRET: string;
   HITTHEROADDUDE_STRIPE_WEBHOOK_SECRET: string;
+  RAPPERMAKER_STRIPE_WEBHOOK_SECRET: string;
   OURLITTLESONG_STRIPE_WEBHOOK_SECRET: string;
   FEISHU_WEBHOOK_URL: string;
   FEISHU_BOT_SECRET: string;
@@ -39,6 +40,11 @@ type SiteDefinition = Omit<SiteConfig, "stripeWebhookSecret"> & {
 };
 
 export const sites: Record<string, SiteDefinition> = {
+  "/rappermaker/stripe/webhook": {
+    slug: "rappermaker",
+    label: "RapperMaker",
+    stripeWebhookSecretName: "RAPPERMAKER_STRIPE_WEBHOOK_SECRET",
+  },
   "/ourlittlesong/stripe/webhook": {
     slug: "ourlittlesong",
     label: "OurLittleSong",
